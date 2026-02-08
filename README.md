@@ -12,7 +12,7 @@ A Model Context Protocol (MCP) compliant CLI tool to convert plans into GitHub p
 
 ## Requirements
 
-- Go 1.23 or higher
+- Go 1.24 or higher
 
 ## Installation
 
