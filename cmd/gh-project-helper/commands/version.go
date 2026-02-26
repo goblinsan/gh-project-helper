@@ -7,9 +7,12 @@ import (
 )
 
 var (
-	Version   = "dev"
-	Commit    = "none"
-	BuildDate = "unknown"
+	// Version is the version of the application
+	Version = "dev"
+	// Commit is the git commit of the build
+	Commit = "none"
+	// Date is the date of the build
+	Date = "unknown"
 )
 
 func init() {
@@ -18,11 +21,9 @@ func init() {
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print the version information",
-	Long:  `Print the version, commit hash, and build date of gh-project-helper.`,
+	Short: "Print the version number of gh-project-helper",
+	Long:  `All software has versions. This is gh-project-helper's`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("gh-project-helper version %s\n", Version)
-		fmt.Printf("  commit: %s\n", Commit)
-		fmt.Printf("  built: %s\n", BuildDate)
+		fmt.Printf("gh-project-helper version %s, commit %s, built at %s\n", Version, Commit, Date)
 	},
 }

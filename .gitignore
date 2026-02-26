@@ -37,3 +37,6 @@ Thumbs.db
 /tmp/
 *.tmp
 *.log
+
+# Real project plans
+/plans/

@@ -1,0 +1,24 @@
+# plan.yaml
+project: "Platform Migration 2026"  # The specific Project V2 Board Title
+repository: "goblinsan/gh-project-helper"   # Owner/Repo
+
+milestones:
+  - title: "Phase 1: Database"
+    due_on: "2026-04-01"
+    description: "Schema consolidation and migration."
+
+epics:
+  - title: "User Schema Refactor"
+    body: "Refactoring the user table to support multi-tenancy."
+    milestone: "Phase 1: Database"
+    status: "Todo"        # Maps to Project V2 Status Field
+    labels: ["backend", "high-priority"]
+    assignees: ["goblinsan"]
+
+    # Child Issues are created first, then linked to the Epic
+    children:
+      - title: "Create migration script"
+        body: "Write SQL to alter table users..."
+        labels: ["database"]
+      - title: "Update ORM models"
+        body: "Update Gorm structs..."

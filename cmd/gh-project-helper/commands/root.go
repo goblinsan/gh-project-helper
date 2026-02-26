@@ -8,8 +8,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+var cfgFile string
+
 var (
-	cfgFile string
 	rootCmd = &cobra.Command{
 		Use:   "gh-project-helper",
 		Short: "A CLI tool to convert plans into GitHub project milestones and issues",
@@ -34,39 +35,27 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-
-	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.gh-project-helper.yaml)")
-	rootCmd.PersistentFlags().String("token", "", "GitHub personal access token")
-	
-	// Bind flags to viper
-	viper.BindPFlag("token", rootCmd.PersistentFlags().Lookup("token"))
 }
 
-// initConfig reads in config file and ENV variables if set.
 func initConfig() {
 	if cfgFile != "" {
-		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
 	} else {
-		// Find home directory.
 		home, err := os.UserHomeDir()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error finding home directory: %v\n", err)
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-
-		// Search config in home directory with name ".gh-project-helper" (without extension).
 		viper.AddConfigPath(home)
 		viper.SetConfigType("yaml")
 		viper.SetConfigName(".gh-project-helper")
 	}
 
-	// Read in environment variables that match
 	viper.SetEnvPrefix("GH_PROJECT_HELPER")
 	viper.AutomaticEnv()
 
-	// If a config file is found, read it in.
+	// If a config file is found, read it in
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 	}
