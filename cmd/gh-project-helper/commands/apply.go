@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/goblinsan/gh-project-helper/pkg/engine"
 	"github.com/goblinsan/gh-project-helper/pkg/github"
@@ -11,6 +14,46 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
+
+// cliPrompter implements engine.Prompter using stdin/stdout.
+type cliPrompter struct {
+	reader *bufio.Reader
+}
+
+func newCLIPrompter() *cliPrompter {
+	return &cliPrompter{reader: bufio.NewReader(os.Stdin)}
+}
+
+func (p *cliPrompter) Confirm(msg string) (bool, error) {
+	fmt.Printf("%s [y/N]: ", msg)
+	line, err := p.reader.ReadString('\n')
+	if err != nil {
+		return false, err
+	}
+	line = strings.TrimSpace(strings.ToLower(line))
+	return line == "y" || line == "yes", nil
+}
+
+func (p *cliPrompter) Select(msg string, choices []string) (int, error) {
+	fmt.Println(msg)
+	for i, c := range choices {
+		fmt.Printf("  [%d] %s\n", i+1, c)
+	}
+	fmt.Print("Enter number (0 to cancel): ")
+	line, err := p.reader.ReadString('\n')
+	if err != nil {
+		return -1, err
+	}
+	line = strings.TrimSpace(line)
+	n, err := strconv.Atoi(line)
+	if err != nil || n < 0 || n > len(choices) {
+		return -1, fmt.Errorf("invalid selection: %s", line)
+	}
+	if n == 0 {
+		return -1, nil
+	}
+	return n - 1, nil
+}
 
 func init() {
 	rootCmd.AddCommand(applyCmd)
@@ -47,7 +90,8 @@ var applyCmd = &cobra.Command{
 
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		report, err := engine.ApplyPlan(context.Background(), client, plan, engine.Options{
-			DryRun: dryRun,
+			DryRun:   dryRun,
+			Prompter: newCLIPrompter(),
 		})
 		if err != nil {
 			return err

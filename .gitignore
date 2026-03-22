@@ -18,6 +18,7 @@ vendor/
 go.work
 
 # Build output
+/ghp
 /gh-project-helper
 /dist/
 /build/

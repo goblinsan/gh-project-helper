@@ -1,0 +1,390 @@
+project: "Gateway-Hosted Chat Platform"
+repository: "goblinsan/gateway-chat-platform"
+
+tech_stack:
+  frontend:
+    - "Vite"
+    - "React"
+    - "TypeScript"
+    - "TanStack Router"
+    - "TanStack Query"
+    - "Tailwind CSS"
+  backend:
+    - "Node.js"
+    - "TypeScript"
+    - "Fastify"
+    - "Zod"
+  data:
+    - "SQLite"
+    - "Prisma"
+  infra:
+    - "Cloudflare Access"
+    - "Cloudflare Tunnel or Reverse Proxy"
+    - "Nginx"
+    - "Docker"
+  testing:
+    - "Vitest"
+    - "Playwright"
+    - "Supertest"
+  observability:
+    - "Pino"
+    - "OpenTelemetry"
+
+milestones:
+  - title: "Phase 1: Foundation and Architecture"
+    due_on: "2026-04-10"
+    description: "Create the deployable skeleton for the gateway-hosted chat platform."
+  - title: "Phase 2: Provider Abstraction Layer"
+    due_on: "2026-04-24"
+    description: "Create a clean routing layer so all model hosts look the same to the app."
+  - title: "Phase 3: Agent System"
+    due_on: "2026-05-08"
+    description: "Make the different tabs work as real agent personas."
+  - title: "Phase 4: Chat UX"
+    due_on: "2026-05-22"
+    description: "Deliver a polished daily-usable multi-agent chat interface."
+  - title: "Phase 5: Persistence and Logging"
+    due_on: "2026-06-05"
+    description: "Preserve conversation history and add diagnostics, usage, and cost logging."
+  - title: "Phase 6: Routing Intelligence"
+    due_on: "2026-06-19"
+    description: "Add smart routing and fallback policies beyond static provider mappings."
+  - title: "Phase 7: Security Hardening"
+    due_on: "2026-07-03"
+    description: "Harden the platform for real use behind the gateway."
+  - title: "Phase 8: Nice-to-Have Enhancements"
+    due_on: "2026-07-24"
+    description: "Add optional features that improve power-user workflows and operations."
+
+epics:
+  - id: "p1-foundation"
+    title: "Foundation and Architecture"
+    body: "Set up the frontend, backend, gateway routing, configuration model, Cloudflare Access, and provider health checks for a deployable baseline platform."
+    milestone: "Phase 1: Foundation and Architecture"
+    status: "Todo"
+    labels: ["backend", "frontend", "infrastructure", "high-priority"]
+    assignees: ["goblinsan"]
+    children:
+      - id: "repo-setup"
+        title: "Create monorepo workspace structure"
+        body: "Set up a monorepo with apps/chat-ui, apps/chat-api, and packages/shared using pnpm workspaces. Add root scripts for build, lint, test, and dev orchestration."
+        labels: ["platform", "devex"]
+      - id: "ui-scaffold"
+        title: "Scaffold apps/chat-ui with Vite React TypeScript"
+        body: "Create the chat-ui app with Vite, React, and TypeScript. Add Tailwind CSS, routing, query client setup, ESLint, Prettier, and a baseline app shell."
+        labels: ["frontend"]
+      - id: "api-scaffold"
+        title: "Scaffold apps/chat-api with Node TypeScript and Fastify"
+        body: "Create the chat-api app using Node.js, TypeScript, and Fastify. Add typed config loading, request logging, error handling, and plugin registration."
+        labels: ["backend"]
+      - id: "shared-package"
+        title: "Create shared package for types and config contracts"
+        body: "Create packages/shared for provider contracts, agent schemas, environment types, API DTOs, and common utilities reused by the UI and API."
+        labels: ["backend", "frontend"]
+      - id: "proxy-routes"
+        title: "Configure reverse proxy routes for chat hostname"
+        body: "Add gateway reverse proxy configuration so chat.yourdomain.com serves the UI and proxies API traffic to chat-api under a stable path."
+        labels: ["infrastructure"]
+      - id: "cf-access"
+        title: "Protect chat hostname with Cloudflare Access"
+        body: "Configure Cloudflare Access policies for the chat hostname, validate login flow, and document required identity provider settings."
+        labels: ["security", "infrastructure"]
+      - id: "env-model"
+        title: "Implement environment and secrets strategy"
+        body: "Define a typed environment model covering LM Studio A base URL, LM Studio B base URL, paid API keys, logging settings, and other secrets. Support local and production deployment modes."
+        labels: ["backend", "security"]
+      - id: "health-endpoint"
+        title: "Build platform health endpoint"
+        body: "Add /health to chat-api to expose service status, build version, config readiness, and dependency summaries suitable for load balancers and admin diagnostics."
+        labels: ["backend"]
+      - id: "provider-probes"
+        title: "Add provider connectivity test endpoints"
+        body: "Implement endpoints that test connectivity to LM Studio host A, LM Studio host B, and enabled paid providers. Return normalized status and error details."
+        labels: ["backend", "observability"]
+      - id: "docker-baseline"
+        title: "Add containerization and deployment baseline"
+        body: "Create Dockerfiles and compose/deployment manifests for chat-ui, chat-api, and reverse proxy integration to support gateway-hosted deployment."
+        labels: ["infrastructure", "devex"]
+
+  - id: "p2-providers"
+    title: "Provider Abstraction Layer"
+    body: "Create a provider adapter layer that normalizes chat, streaming, model listing, and connection testing across LM Studio and paid providers."
+    milestone: "Phase 2: Provider Abstraction Layer"
+    status: "Todo"
+    labels: ["backend", "high-priority", "api"]
+    assignees: ["goblinsan"]
+    children:
+      - id: "provider-interface"
+        title: "Define provider adapter interface"
+        body: "Create a typed provider interface exposing sendChat, streamChat, listModels, and testConnection with shared request and response contracts."
+        labels: ["backend", "architecture"]
+      - id: "lmstudio-adapter"
+        title: "Implement LM Studio provider adapter"
+        body: "Build an LM Studio adapter that supports host-specific configuration for host A and host B while reusing normalized request and response types."
+        labels: ["backend"]
+      - id: "paid-adapter"
+        title: "Implement first paid provider adapter"
+        body: "Build the first paid provider adapter for the selected production provider, including auth handling, model listing, chat completion, and streaming support."
+        labels: ["backend", "integrations"]
+      - id: "normalize-schema"
+        title: "Normalize provider request and response fields"
+        body: "Map token usage, finish reasons, tool call structures, message roles, and response metadata into a consistent internal schema."
+        labels: ["backend", "api"]
+      - id: "streaming-normalization"
+        title: "Unify streaming event format across providers"
+        body: "Create a provider-agnostic stream event format for partial tokens, completion metadata, error events, and end-of-stream handling."
+        labels: ["backend", "api"]
+      - id: "retry-policy"
+        title: "Add timeout and retry policies"
+        body: "Implement provider-level timeouts, exponential backoff, retry classification, and safe retry guards for idempotent operations."
+        labels: ["backend", "reliability"]
+      - id: "fallback-policy"
+        title: "Implement provider fallback handling"
+        body: "Support optional failover from LM Studio hosts to a paid provider for approved agents when local hosts are unavailable or unhealthy."
+        labels: ["backend", "reliability"]
+      - id: "provider-tests"
+        title: "Add integration tests for provider adapters"
+        body: "Create automated tests for provider interface compliance, normalized outputs, stream behavior, and fallback scenarios."
+        labels: ["backend", "testing"]
+
+  - id: "p3-agents"
+    title: "Agent System"
+    body: "Introduce distinct agent personas with registry-driven configuration, tabbed navigation, server-side prompt injection, and per-agent settings."
+    milestone: "Phase 3: Agent System"
+    status: "Todo"
+    labels: ["frontend", "backend", "product"]
+    assignees: ["goblinsan"]
+    children:
+      - id: "agent-registry"
+        title: "Define agent registry and config schema"
+        body: "Create a registry file and schema for agent name, icon/color, provider target, model, cost class, default prompt, and feature flags."
+        labels: ["backend", "frontend"]
+      - id: "agent-tabs"
+        title: "Build agent tab navigation in UI"
+        body: "Add tabbed navigation that displays available agents and allows switching between agent-scoped workspaces."
+        labels: ["frontend"]
+      - id: "agent-identity"
+        title: "Display per-agent identity metadata"
+        body: "Show each agent's name, icon or color, backend host, model, and cost class in the tab navigation and active chat header."
+        labels: ["frontend"]
+      - id: "prompt-injection"
+        title: "Inject persona prompts server-side"
+        body: "Apply the selected agent's system prompt on the backend so persona behavior is enforced without exposing prompt templates in the browser."
+        labels: ["backend", "security"]
+      - id: "agent-settings"
+        title: "Support agent-specific generation settings"
+        body: "Add optional settings per agent for temperature, response length, and reasoning toggle where the provider supports it."
+        labels: ["backend", "frontend"]
+      - id: "new-chat-agent"
+        title: "Add new chat flow scoped to active agent"
+        body: "Implement a new chat action that starts a fresh thread for the selected agent without affecting conversations for other agents."
+        labels: ["frontend"]
+      - id: "seed-agents"
+        title: "Seed initial default agent configurations"
+        body: "Add starter definitions for Local Analyst, Creative Builder, Premium Deep Reasoner, Fast Cheap Helper, and Tool Agent."
+        labels: ["product", "backend"]
+
+  - id: "p4-chat-ux"
+    title: "Chat UX"
+    body: "Build a polished daily-usable interface with chat threads, streaming responses, metadata display, and productivity actions."
+    milestone: "Phase 4: Chat UX"
+    status: "Todo"
+    labels: ["frontend", "design", "high-priority"]
+    assignees: ["goblinsan"]
+    children:
+      - id: "app-layout"
+        title: "Build core multi-pane application layout"
+        body: "Implement the top header, left sidebar for chat history, agent tabs across the top or side, and main chat panel using responsive layout patterns."
+        labels: ["frontend"]
+      - id: "message-list"
+        title: "Implement chat message list and composer"
+        body: "Add the message timeline, user prompt composer, submit flow, loading states, and empty-state experience for new chats."
+        labels: ["frontend"]
+      - id: "streaming-ui"
+        title: "Render streaming token responses in real time"
+        body: "Connect normalized streaming events to the UI and progressively render assistant output with interruption-safe state handling."
+        labels: ["frontend"]
+      - id: "status-indicators"
+        title: "Add provider and connectivity status indicators"
+        body: "Show connected state and current execution target such as local host A, local host B, or paid provider in the interface."
+        labels: ["frontend", "observability"]
+      - id: "message-metadata"
+        title: "Display per-message execution metadata"
+        body: "Show model used, provider used, latency, token counts when available, and estimated paid cost for each assistant response."
+        labels: ["frontend"]
+      - id: "message-actions"
+        title: "Add copy regenerate and edit-resend actions"
+        body: "Implement productivity actions for copying content, regenerating responses, and editing a previous prompt then resending it."
+        labels: ["frontend"]
+      - id: "markdown-rendering"
+        title: "Render markdown with code block support"
+        body: "Add markdown rendering for assistant messages, including fenced code blocks, tables, inline code, and syntax highlighting."
+        labels: ["frontend"]
+      - id: "dark-theme"
+        title: "Apply dark theme optimized for internal use"
+        body: "Create a polished dark theme with readable contrast, dense workspace ergonomics, and consistent component styling."
+        labels: ["frontend", "design"]
+      - id: "ui-e2e"
+        title: "Add end-to-end tests for core chat workflows"
+        body: "Use Playwright to validate chat creation, agent switching, streaming, history navigation, and regenerate/edit-resend flows."
+        labels: ["testing", "frontend"]
+
+  - id: "p5-persistence"
+    title: "Persistence and Logging"
+    body: "Persist conversations and execution metadata while adding logs and an admin diagnostics view for troubleshooting and cost tracking."
+    milestone: "Phase 5: Persistence and Logging"
+    status: "Todo"
+    labels: ["backend", "data", "observability"]
+    assignees: ["goblinsan"]
+    children:
+      - id: "db-schema"
+        title: "Design persistence schema for chats and usage"
+        body: "Create Prisma models for conversations, messages, selected agent, provider, model, latency, token usage, estimated paid cost, and audit timestamps."
+        labels: ["backend", "database"]
+      - id: "sqlite-setup"
+        title: "Set up SQLite for v1 persistence"
+        body: "Configure SQLite as the default storage backend for the initial single-gateway deployment and add migration scripts."
+        labels: ["database"]
+      - id: "conversation-storage"
+        title: "Persist conversations and messages"
+        body: "Store thread metadata and full message history, including agent assignment and normalized provider execution details."
+        labels: ["backend", "database"]
+      - id: "usage-logging"
+        title: "Capture usage and cost logs"
+        body: "Record token usage, estimated paid cost, provider selection, and response latency for each completion request."
+        labels: ["backend", "observability"]
+      - id: "app-logs"
+        title: "Add rolling structured application logs"
+        body: "Use structured logging with rotation or retention policy to capture request context, provider errors, and operational events."
+        labels: ["backend", "observability"]
+      - id: "admin-diagnostics"
+        title: "Build admin diagnostics page"
+        body: "Create an internal admin view showing provider health, recent errors, request counts by agent, and cost by provider."
+        labels: ["frontend", "backend", "admin"]
+      - id: "retention-policy"
+        title: "Define data retention and cleanup jobs"
+        body: "Implement configurable retention rules for logs and archived conversations, including automated cleanup tasks."
+        labels: ["backend", "operations"]
+
+  - id: "p6-routing"
+    title: "Routing Intelligence"
+    body: "Add policy-based provider routing and failover that can evolve beyond static agent-to-provider mappings without changing the UI."
+    milestone: "Phase 6: Routing Intelligence"
+    status: "Todo"
+    labels: ["backend", "architecture", "optimization"]
+    assignees: ["goblinsan"]
+    children:
+      - id: "routing-engine"
+        title: "Implement routing rules engine"
+        body: "Build a routing engine that evaluates agent preferences, provider availability, cost, latency, prompt length, and capability requirements."
+        labels: ["backend", "architecture"]
+      - id: "static-routing"
+        title: "Support static agent-to-provider routing"
+        body: "Preserve v1 behavior where each agent maps directly to a preferred provider and model with explicit override controls."
+        labels: ["backend"]
+      - id: "policy-routing"
+        title: "Add policy-based routing options"
+        body: "Support rule evaluation based on prompt length, need for speed, tool support, cost cap, provider health, and context window size."
+        labels: ["backend", "optimization"]
+      - id: "failover-rules"
+        title: "Implement smart failover policy rules"
+        body: "Add fallback behavior that automatically chooses an allowed paid provider when a local host is unavailable or outside policy thresholds."
+        labels: ["backend", "reliability"]
+      - id: "routing-observability"
+        title: "Log routing decisions and reasons"
+        body: "Record selected provider, rejected candidates, policy matches, and fallback reasons to support diagnostics and tuning."
+        labels: ["backend", "observability"]
+      - id: "router-tests"
+        title: "Add test coverage for routing scenarios"
+        body: "Create automated tests for short prompts, code-heavy prompts, reasoning tasks, provider outages, and policy overrides."
+        labels: ["backend", "testing"]
+
+  - id: "p7-security"
+    title: "Security Hardening"
+    body: "Harden the platform with origin protection, backend-only secret handling, strict validation, abuse controls, and restricted admin access."
+    milestone: "Phase 7: Security Hardening"
+    status: "Todo"
+    labels: ["security", "backend", "infrastructure", "high-priority"]
+    assignees: ["goblinsan"]
+    children:
+      - id: "origin-lockdown"
+        title: "Restrict origin access behind Cloudflare"
+        body: "Configure the origin to accept only Cloudflare traffic where practical and document firewall or allowlist requirements for the deployment."
+        labels: ["security", "infrastructure"]
+      - id: "secret-boundary"
+        title: "Keep provider secrets server-side only"
+        body: "Audit frontend and backend boundaries to ensure paid API keys and provider credentials never reach browser code or client-visible responses."
+        labels: ["security", "backend"]
+      - id: "request-validation"
+        title: "Validate all incoming API payloads"
+        body: "Use Zod schemas and Fastify validation to enforce shape, type, and bounds on all API requests and settings payloads."
+        labels: ["security", "backend"]
+      - id: "csrf-session"
+        title: "Add CSRF and session strategy for internal auth context"
+        body: "Implement CSRF protections and secure cookie or session handling if the app maintains authenticated backend state beyond Cloudflare Access."
+        labels: ["security", "backend"]
+      - id: "rate-limits"
+        title: "Add per-user and per-session rate limits"
+        body: "Apply rate limiting policies to chat execution, diagnostics endpoints, and authentication-sensitive actions."
+        labels: ["security", "backend"]
+      - id: "request-size-limits"
+        title: "Enforce request size and payload limits"
+        body: "Set maximum request body sizes and attachment limits to reduce abuse and prevent oversized prompt submissions."
+        labels: ["security", "backend"]
+      - id: "sanitize-markdown"
+        title: "Sanitize rendered markdown content"
+        body: "Sanitize markdown and HTML output to prevent XSS while preserving safe formatting, links, and code blocks."
+        labels: ["security", "frontend"]
+      - id: "audit-logs"
+        title: "Add audit logging for provider usage and admin access"
+        body: "Record key events such as provider usage, settings changes, diagnostics access, and policy-triggered fallbacks."
+        labels: ["security", "observability"]
+      - id: "admin-restrictions"
+        title: "Restrict admin endpoints and diagnostics views"
+        body: "Apply role or identity-based access checks to all admin APIs and internal diagnostics pages behind Cloudflare Access context."
+        labels: ["security", "backend", "admin"]
+      - id: "security-review"
+        title: "Run hardening review and remediation pass"
+        body: "Perform a structured review of auth flow, headers, secrets, rate limits, validation, and origin exposure, then fix identified gaps."
+        labels: ["security", "operations"]
+
+  - id: "p8-enhancements"
+    title: "Nice-to-Have Enhancements"
+    body: "Deliver optional features that expand the platform into a more capable multi-agent workspace and operations console."
+    milestone: "Phase 8: Nice-to-Have Enhancements"
+    status: "Todo"
+    labels: ["enhancement", "frontend", "backend"]
+    assignees: ["goblinsan"]
+    children:
+      - id: "file-upload"
+        title: "Add file upload and retrieval per conversation"
+        body: "Support attaching files to a conversation, storing metadata, and making files available to approved agents during chat execution."
+        labels: ["frontend", "backend"]
+      - id: "tool-calling"
+        title: "Enable tool calling for internal services"
+        body: "Extend the provider abstraction and agent runtime to support tool invocation against internal APIs or service adapters."
+        labels: ["backend", "integrations"]
+      - id: "model-compare"
+        title: "Build model comparison mode"
+        body: "Allow a single prompt to be run against multiple providers or models side by side for evaluation and workflow comparison."
+        labels: ["frontend", "backend"]
+      - id: "prompt-library"
+        title: "Create shared prompts library"
+        body: "Add a reusable prompt library with categories, search, and copy or inject actions for common internal tasks."
+        labels: ["frontend", "product"]
+      - id: "speech-io"
+        title: "Add speech input and output"
+        body: "Support microphone input for prompt capture and text-to-speech playback for assistant responses where appropriate."
+        labels: ["frontend"]
+      - id: "agent-handoff"
+        title: "Implement agent handoff between tabs"
+        body: "Allow a conversation or selected message context to be handed off from one agent to another while preserving trace metadata."
+        labels: ["frontend", "backend"]
+      - id: "saved-workflows"
+        title: "Add saved multi-step workflows"
+        body: "Create reusable workflows composed of prompts, agent selections, and optional tool steps for repeatable tasks."
+        labels: ["frontend", "backend"]
+      - id: "auto-router-tab"
+        title: "Add auto router agent tab"
+        body: "Create an Auto tab that delegates model selection to the routing engine and explains which provider was chosen and why."
+        labels: ["frontend", "backend"]

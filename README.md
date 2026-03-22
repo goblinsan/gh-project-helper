@@ -41,10 +41,10 @@ token: ghp_yourGitHubPersonalAccessToken
 ./gh-project-helper --help
 
 # Check version
-./gh-project-helper version
+./ghp version
 
 # Authenticate and display user info
-./gh-project-helper whoami --token YOUR_GITHUB_TOKEN
+./ghp whoami --token YOUR_GITHUB_TOKEN
 ```
 
 ## Project Structure

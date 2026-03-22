@@ -1,0 +1,161 @@
+project: home-automation-scripts
+repository: goblinsan/home-automation-scripts
+
+epics:
+
+  - title: Repository Foundation
+    body: >
+      Establish the base repository structure, development environment,
+      and documentation framework for the automation scripts collection.
+    children:
+      - title: Create GitHub repository
+        body: Initialize repository with README and license.
+
+      - title: Define project directory structure
+        body: >
+          Establish clear separation between scripts, configs, tools,
+          and secrets.
+
+      - title: Write project README
+        body: >
+          Explain project purpose, philosophy, and quick start guide.
+
+      - title: Configure .gitignore
+        body: >
+          Ensure logs, secrets, environment files, and generated output
+          are never committed to the repository.
+
+  - title: Server Setup and Installation
+    body: >
+      Provide a documented setup process so the automation system can be
+      installed on a fresh Linux home server.
+    children:
+      - title: Define system dependencies
+        body: >
+          Document required packages such as python3, pip, git, cron,
+          jq, and other utilities.
+
+      - title: Create install.sh bootstrap script
+        body: >
+          Script that installs dependencies, prepares directories,
+          and installs Python packages.
+
+      - title: Configure Python virtual environment
+        body: >
+          Provide isolated environment for automation tools.
+
+      - title: Write installation documentation
+        body: >
+          Step-by-step guide for installing the automation suite on
+          a new home server.
+
+  - title: Secure Credential Management
+    body: >
+      Implement safe credential storage so that secrets never appear
+      in scripts or in the Git repository.
+    children:
+      - title: Create .env.example template
+        body: >
+          Template environment file listing all required credentials.
+
+      - title: Implement environment loader utility
+        body: >
+          Helper script that loads credentials securely from environment
+          variables into scripts.
+
+      - title: Create encrypted secrets directory
+        body: >
+          Store sensitive files locally using encrypted storage or
+          OS permissions.
+
+      - title: Document credential configuration
+        body: >
+          Explain how to create local .env files and prevent leakage
+          into version control.
+
+  - title: Automation Script Runner
+    body: >
+      Provide a consistent runner interface for executing automation
+      scripts with logging and error handling.
+    children:
+      - title: Build central automation runner
+        body: >
+          Python CLI tool that executes registered automation tasks.
+
+      - title: Implement logging system
+        body: >
+          All scripts log output to logs directory with timestamps.
+
+      - title: Add standardized error handling
+        body: >
+          Failures should be captured and logged clearly.
+
+  - title: Cron Job Integration
+    body: >
+      Provide instructions and utilities for scheduling automation
+      scripts through cron or systemd timers.
+    children:
+      - title: Write cron job configuration guide
+        body: >
+          Documentation explaining how to schedule scripts safely.
+
+      - title: Create cron job template file
+        body: >
+          Example cron configuration entries.
+
+      - title: Build helper tool for installing cron jobs
+        body: >
+          CLI command to install predefined scheduled tasks.
+
+  - title: Tool Registration System
+    body: >
+      Create a modular system where automation tools can be registered
+      and discovered dynamically.
+    children:
+      - title: Design tool registry format
+        body: >
+          Define JSON or YAML schema describing automation tools.
+
+      - title: Implement registry loader
+        body: >
+          Script that discovers available automation tools.
+
+      - title: Create CLI for listing available tools
+        body: >
+          Allow running commands such as automation list and automation run github-helper.
+
+      - title: Register GitHub project helper
+        body: >
+          Add your GitHub issue/project helper as the first registered tool.
+
+  - title: Server Maintenance Automation
+    body: >
+      Provide useful default automation scripts for server upkeep.
+    children:
+      - title: Implement system health check script
+        body: >
+          Monitor disk usage, CPU load, and memory utilization.
+
+      - title: Implement log rotation script
+        body: >
+          Automatically prune old logs.
+
+      - title: Implement package update notifier
+        body: >
+          Notify when system updates are available.
+
+  - title: Documentation and Usage Guides
+    body: >
+      Ensure all automation tools are easy to configure and extend.
+    children:
+      - title: Write usage documentation
+        body: >
+          Explain how to run automation tasks manually.
+
+      - title: Document how to add new automation tools
+        body: >
+          Provide step-by-step instructions for extending the system.
+
+      - title: Document system architecture
+        body: >
+          Describe how scripts, registry, cron jobs, and secrets interact.

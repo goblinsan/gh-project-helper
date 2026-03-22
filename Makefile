@@ -1,4 +1,5 @@
-BINARY_NAME := gh-project-helper
+BINARY_NAME := ghp
+INSTALL_DIR := /usr/local/bin
 MODULE := github.com/goblinsan/gh-project-helper
 BUILD_DIR := ./cmd/gh-project-helper
 
@@ -18,8 +19,8 @@ all: test build
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) $(BUILD_DIR)
 
-install:
-	go install -ldflags "$(LDFLAGS)" $(BUILD_DIR)
+install: build
+	cp $(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 
 test:
 	go test ./... -v
@@ -36,12 +37,13 @@ lint: vet
 
 clean:
 	rm -f $(BINARY_NAME)
+	rm -f $(INSTALL_DIR)/$(BINARY_NAME)
 	rm -rf dist/ build/
 
 validate:
-	go run $(BUILD_DIR) validate -f plan.yaml
+	./$(BINARY_NAME) validate -f plan.yaml
 
 dry-run:
-	go run $(BUILD_DIR) apply -f plan.yaml --dry-run
+	./$(BINARY_NAME) apply -f plan.yaml --dry-run
 
 .DEFAULT_GOAL := all

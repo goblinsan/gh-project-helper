@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"testing"
 
@@ -18,10 +19,25 @@ type mockClient struct {
 	projectItems   []string
 	statusUpdates  []string
 	labelRequests  []string
+	subIssueLinks  [][2]string // [parentID, childID]
+
+	// Pre-flight tracking
+	repoExists       bool
+	readmeExists     bool
+	projectExists    bool
+	repoCreated      bool
+	readmeCreated    bool
+	projectCreated   bool
+	projectLinked    bool
+	searchRepoResult []ghclient.RepoSearchResult
 }
 
 func newMockClient() *mockClient {
-	return &mockClient{}
+	return &mockClient{
+		repoExists:    true,
+		readmeExists:  true,
+		projectExists: true,
+	}
 }
 
 func (m *mockClient) GetRepositoryID(_ context.Context, _, _ string) (string, error) {
@@ -29,6 +45,9 @@ func (m *mockClient) GetRepositoryID(_ context.Context, _, _ string) (string, er
 }
 
 func (m *mockClient) GetProjectV2ID(_ context.Context, _, _ string) (string, error) {
+	if !m.projectExists {
+		return "", fmt.Errorf("project not found")
+	}
 	return "project-node-id", nil
 }
 
@@ -54,6 +73,10 @@ func (m *mockClient) GetMilestoneID(_ context.Context, _, _ string, _ int) (stri
 
 func (m *mockClient) FindIssueByTitle(_ context.Context, _, _, _ string) (int, string, error) {
 	return 0, "", nil // No existing issues by default
+}
+
+func (m *mockClient) ListAllIssues(_ context.Context, _, _ string) (map[string]ghclient.IssueRef, error) {
+	return make(map[string]ghclient.IssueRef), nil // No existing issues by default
 }
 
 func (m *mockClient) GetOrCreateLabel(_ context.Context, _, _, labelName string) (githubv4.ID, error) {
@@ -87,6 +110,61 @@ func (m *mockClient) AddIssueToProjectV2(_ context.Context, _, contentID githubv
 func (m *mockClient) UpdateProjectV2ItemStatus(_ context.Context, _, _, _ githubv4.ID, optionID string) error {
 	m.statusUpdates = append(m.statusUpdates, optionID)
 	return nil
+}
+
+func (m *mockClient) AddSubIssue(_ context.Context, parentIssueID, childIssueID githubv4.ID) error {
+	m.subIssueLinks = append(m.subIssueLinks, [2]string{parentIssueID.(string), childIssueID.(string)})
+	return nil
+}
+
+func (m *mockClient) RepoExists(_ context.Context, _, _ string) (bool, error) {
+	return m.repoExists, nil
+}
+
+func (m *mockClient) SearchRepos(_ context.Context, _, _ string) ([]ghclient.RepoSearchResult, error) {
+	return m.searchRepoResult, nil
+}
+
+func (m *mockClient) CreateRepo(_ context.Context, _, _ string) error {
+	m.repoCreated = true
+	return nil
+}
+
+func (m *mockClient) HasReadme(_ context.Context, _, _ string) (bool, error) {
+	return m.readmeExists, nil
+}
+
+func (m *mockClient) CreateReadme(_ context.Context, _, _ string) error {
+	m.readmeCreated = true
+	return nil
+}
+
+func (m *mockClient) GetOwnerID(_ context.Context, _ string) (string, error) {
+	return "owner-node-id", nil
+}
+
+func (m *mockClient) CreateProjectV2(_ context.Context, _, _ string) (string, error) {
+	m.projectCreated = true
+	return "new-project-id", nil
+}
+
+func (m *mockClient) LinkProjectV2ToRepo(_ context.Context, _, _ string) error {
+	m.projectLinked = true
+	return nil
+}
+
+// mockPrompter implements Prompter for testing.
+type mockPrompter struct {
+	confirmResult bool
+	selectResult  int
+}
+
+func (p *mockPrompter) Confirm(_ string) (bool, error) {
+	return p.confirmResult, nil
+}
+
+func (p *mockPrompter) Select(_ string, _ []string) (int, error) {
+	return p.selectResult, nil
 }
 
 func TestApplyPlan_BasicPlan(t *testing.T) {
@@ -146,9 +224,17 @@ func TestApplyPlan_BasicPlan(t *testing.T) {
 		t.Errorf("expected 3 status updates, got %d", len(mock.statusUpdates))
 	}
 
-	// Labels: "database" for child1, "backend" for epic
-	if len(mock.labelRequests) != 2 {
-		t.Errorf("expected 2 label requests, got %d: %v", len(mock.labelRequests), mock.labelRequests)
+	// Labels: "database" for child1, "Epic" (auto) + "backend" for epic
+	if len(mock.labelRequests) != 3 {
+		t.Errorf("expected 3 label requests (database+Epic+backend), got %d: %v", len(mock.labelRequests), mock.labelRequests)
+	}
+	if mock.labelRequests[0] != "database" {
+		t.Errorf("expected first label request to be 'database', got %q", mock.labelRequests[0])
+	}
+
+	// Sub-issue links: 2 children linked to the epic
+	if len(mock.subIssueLinks) != 2 {
+		t.Errorf("expected 2 sub-issue links, got %d: %v", len(mock.subIssueLinks), mock.subIssueLinks)
 	}
 }
 
@@ -260,6 +346,14 @@ func (m *idempotentMockClient) FindIssueByTitle(_ context.Context, _, _, title s
 	return 0, "", nil
 }
 
+func (m *idempotentMockClient) ListAllIssues(_ context.Context, _, _ string) (map[string]ghclient.IssueRef, error) {
+	result := make(map[string]ghclient.IssueRef)
+	for title, num := range m.existingIssues {
+		result[title] = ghclient.IssueRef{Number: num, NodeID: "existing-node-" + title}
+	}
+	return result, nil
+}
+
 func TestReport_String(t *testing.T) {
 	r := &Report{
 		MilestonesCreated: 2,
@@ -271,5 +365,139 @@ func TestReport_String(t *testing.T) {
 	expected := "Summary: 2 milestones synced, 3 epics created (1 skipped), 10 issues created (2 skipped)"
 	if r.String() != expected {
 		t.Errorf("expected %q, got %q", expected, r.String())
+	}
+}
+
+func TestApplyPlan_CreatesRepoWhenMissing(t *testing.T) {
+	mock := newMockClient()
+	mock.repoExists = false
+
+	plan := types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/new-repo",
+		Epics: []types.Epic{
+			{Title: "Epic 1", Body: "body"},
+		},
+	}
+
+	report, err := ApplyPlan(context.Background(), mock, plan, Options{
+		Prompter: &mockPrompter{confirmResult: true},
+	})
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if !mock.repoCreated {
+		t.Error("expected repo to be created")
+	}
+	if report.EpicsCreated != 1 {
+		t.Errorf("expected 1 epic, got %d", report.EpicsCreated)
+	}
+}
+
+func TestApplyPlan_CreatesReadmeWhenMissing(t *testing.T) {
+	mock := newMockClient()
+	mock.readmeExists = false
+
+	plan := types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/repo",
+		Epics: []types.Epic{
+			{Title: "Epic 1", Body: "body"},
+		},
+	}
+
+	_, err := ApplyPlan(context.Background(), mock, plan, Options{})
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if !mock.readmeCreated {
+		t.Error("expected README to be created")
+	}
+}
+
+func TestApplyPlan_CreatesProjectWhenMissing(t *testing.T) {
+	mock := newMockClient()
+	mock.projectExists = false
+
+	plan := types.Plan{
+		Project:    "New Project",
+		Repository: "owner/repo",
+		Epics: []types.Epic{
+			{Title: "Epic 1", Body: "body"},
+		},
+	}
+
+	_, err := ApplyPlan(context.Background(), mock, plan, Options{})
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if !mock.projectCreated {
+		t.Error("expected project to be created")
+	}
+}
+
+func TestApplyPlan_LinksProjectToRepo(t *testing.T) {
+	mock := newMockClient()
+
+	plan := types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/repo",
+		Epics: []types.Epic{
+			{Title: "Epic 1", Body: "body"},
+		},
+	}
+
+	_, err := ApplyPlan(context.Background(), mock, plan, Options{})
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if !mock.projectLinked {
+		t.Error("expected project to be linked to repo")
+	}
+}
+
+func TestApplyPlan_RepoNotFoundNoPrompter(t *testing.T) {
+	mock := newMockClient()
+	mock.repoExists = false
+
+	plan := types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/repo",
+	}
+
+	_, err := ApplyPlan(context.Background(), mock, plan, Options{})
+	if err == nil {
+		t.Fatal("expected error when repo missing and no prompter")
+	}
+}
+
+func TestApplyPlan_SimilarRepoSelected(t *testing.T) {
+	mock := newMockClient()
+	mock.repoExists = false
+	mock.searchRepoResult = []ghclient.RepoSearchResult{
+		{FullName: "owner/similar-repo", Description: "A similar repo"},
+	}
+
+	plan := types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/my-repo",
+		Epics: []types.Epic{
+			{Title: "Epic 1", Body: "body"},
+		},
+	}
+
+	// Select the first similar repo (index 0)
+	report, err := ApplyPlan(context.Background(), mock, plan, Options{
+		Prompter: &mockPrompter{selectResult: 0},
+	})
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	// Should NOT have created a new repo since user chose existing
+	if mock.repoCreated {
+		t.Error("expected repo NOT to be created when user chose existing")
+	}
+	if report.EpicsCreated != 1 {
+		t.Errorf("expected 1 epic, got %d", report.EpicsCreated)
 	}
 }

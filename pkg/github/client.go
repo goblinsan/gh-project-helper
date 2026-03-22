@@ -14,6 +14,12 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// RepoSearchResult holds a similar repository match.
+type RepoSearchResult struct {
+	FullName    string
+	Description string
+}
+
 // Client wraps both the REST API client (go-github) and GraphQL client (githubv4)
 type Client struct {
 	REST    *github.Client
@@ -168,6 +174,39 @@ func (c *Client) GetOrCreateMilestone(ctx context.Context, owner, repo, title, d
 	}
 
 	return createdMilestone, nil
+}
+
+// IssueRef holds the number and node ID of a GitHub issue.
+type IssueRef struct {
+	Number int
+	NodeID string
+}
+
+// ListAllIssues fetches all open issues from the repo and returns a map keyed by title.
+// Using the Issues list endpoint avoids the Search API's strict rate limit of 30 req/min.
+func (c *Client) ListAllIssues(ctx context.Context, owner, repo string) (map[string]IssueRef, error) {
+	result := make(map[string]IssueRef)
+	opts := &github.IssueListByRepoOptions{
+		State: "open",
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	for {
+		issues, resp, err := c.REST.Issues.ListByRepo(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, issue := range issues {
+			result[issue.GetTitle()] = IssueRef{
+				Number: issue.GetNumber(),
+				NodeID: issue.GetNodeID(),
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return result, nil
 }
 
 // FindIssueByTitle searches for an open issue with the exact title in the given repo.
@@ -329,6 +368,41 @@ func (c *Client) GetProjectV2StatusFieldOptions(ctx context.Context, projectID g
 	return nil, nil, fmt.Errorf("status field not found on project")
 }
 
+// AddSubIssueInput is the input for the addSubIssue mutation.
+// This type is not yet in the shurcooL/githubv4 library but the library
+// derives the GraphQL type name from the Go type name via reflection,
+// so naming it AddSubIssueInput maps to the correct GraphQL input type.
+type AddSubIssueInput struct {
+	// The ID of the parent issue. (Required.)
+	IssueID githubv4.ID `json:"issueId"`
+	// The ID of the sub-issue to add. (Optional — provide this or SubIssueURL.)
+	SubIssueID *githubv4.ID `json:"subIssueId,omitempty"`
+	// Whether to replace the existing parent if the sub-issue already has one. (Optional.)
+	ReplaceParent *githubv4.Boolean `json:"replaceParent,omitempty"`
+
+	ClientMutationID *githubv4.String `json:"clientMutationId,omitempty"`
+}
+
+type AddSubIssueMutation struct {
+	AddSubIssue struct {
+		SubIssue struct {
+			ID githubv4.ID
+		}
+		Issue struct {
+			ID githubv4.ID
+		}
+	} `graphql:"addSubIssue(input: $input)"`
+}
+
+func (c *Client) AddSubIssue(ctx context.Context, parentIssueID, childIssueID githubv4.ID) error {
+	var mutation AddSubIssueMutation
+	input := AddSubIssueInput{
+		IssueID:    parentIssueID,
+		SubIssueID: &childIssueID,
+	}
+	return c.GraphQL.Mutate(ctx, &mutation, input, nil)
+}
+
 type UpdateProjectV2ItemFieldValueMutation struct {
 	UpdateProjectV2ItemFieldValue struct {
 		ClientMutationId githubv4.String
@@ -348,4 +422,176 @@ func (c *Client) UpdateProjectV2ItemStatus(ctx context.Context, projectID, itemI
 	}
 	err := c.GraphQL.Mutate(ctx, &mutation, input, nil)
 	return err
+}
+
+// RepoExists checks whether the repository owner/name exists.
+func (c *Client) RepoExists(ctx context.Context, owner, name string) (bool, error) {
+	_, resp, err := c.REST.Repositories.Get(ctx, owner, name)
+	if err != nil {
+		if resp != nil && resp.StatusCode == 404 {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// SearchRepos returns repositories under the given owner whose names are similar to the query.
+func (c *Client) SearchRepos(ctx context.Context, owner, query string) ([]RepoSearchResult, error) {
+	q := fmt.Sprintf("%s in:name org:%s", query, owner)
+	// Also try user: qualifier in case owner is a user, not an org
+	results, _, err := c.REST.Search.Repositories(ctx, q, &github.SearchOptions{
+		ListOptions: github.ListOptions{PerPage: 10},
+	})
+	if err != nil {
+		// Retry with user qualifier
+		q = fmt.Sprintf("%s in:name user:%s", query, owner)
+		results, _, err = c.REST.Search.Repositories(ctx, q, &github.SearchOptions{
+			ListOptions: github.ListOptions{PerPage: 10},
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var matches []RepoSearchResult
+	for _, r := range results.Repositories {
+		matches = append(matches, RepoSearchResult{
+			FullName:    r.GetFullName(),
+			Description: r.GetDescription(),
+		})
+	}
+	return matches, nil
+}
+
+// CreateRepo creates a new repository under the given owner.
+// If owner matches the authenticated user, it creates a user repo; otherwise an org repo.
+func (c *Client) CreateRepo(ctx context.Context, owner, name string) error {
+	user, _, err := c.REST.Users.Get(ctx, "")
+	if err != nil {
+		return fmt.Errorf("failed to get authenticated user: %w", err)
+	}
+
+	repo := &github.Repository{
+		Name:    github.String(name),
+		Private: github.Bool(false),
+		AutoInit: github.Bool(false),
+	}
+
+	if user.GetLogin() == owner {
+		_, _, err = c.REST.Repositories.Create(ctx, "", repo)
+	} else {
+		_, _, err = c.REST.Repositories.Create(ctx, owner, repo)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create repo %s/%s: %w", owner, name, err)
+	}
+	return nil
+}
+
+// HasReadme checks whether the repository has a README file.
+func (c *Client) HasReadme(ctx context.Context, owner, name string) (bool, error) {
+	_, _, resp, err := c.REST.Repositories.GetContents(ctx, owner, name, "README.md", nil)
+	if err != nil {
+		if resp != nil && resp.StatusCode == 404 {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// CreateReadme creates a default README.md in the repository.
+func (c *Client) CreateReadme(ctx context.Context, owner, name string) error {
+	content := fmt.Sprintf("# %s\n", name)
+	_, _, err := c.REST.Repositories.CreateFile(ctx, owner, name, "README.md", &github.RepositoryContentFileOptions{
+		Message: github.String("docs: add README"),
+		Content: []byte(content),
+	})
+	return err
+}
+
+// CreateProjectV2 mutation types
+
+type CreateProjectV2Mutation struct {
+	CreateProjectV2 struct {
+		ProjectV2 struct {
+			ID    string
+			Title string
+		}
+	} `graphql:"createProjectV2(input: $input)"`
+}
+
+type CreateProjectV2Input struct {
+	OwnerID githubv4.ID    `json:"ownerId"`
+	Title   githubv4.String `json:"title"`
+}
+
+// GetOwnerID returns the node ID of the given user or organization.
+func (c *Client) GetOwnerID(ctx context.Context, login string) (string, error) {
+	// Try user first
+	var userQ struct {
+		User struct {
+			ID string
+		} `graphql:"user(login: $login)"`
+	}
+	vars := map[string]interface{}{"login": githubv4.String(login)}
+	if err := c.GraphQL.Query(ctx, &userQ, vars); err == nil && userQ.User.ID != "" {
+		return userQ.User.ID, nil
+	}
+
+	// Fall back to organization
+	var orgQ struct {
+		Organization struct {
+			ID string
+		} `graphql:"organization(login: $login)"`
+	}
+	if err := c.GraphQL.Query(ctx, &orgQ, vars); err == nil && orgQ.Organization.ID != "" {
+		return orgQ.Organization.ID, nil
+	}
+
+	return "", fmt.Errorf("owner %q not found as user or organization", login)
+}
+
+// CreateProjectV2 creates a new GitHub Projects V2 board under the given owner.
+func (c *Client) CreateProjectV2(ctx context.Context, ownerID, title string) (string, error) {
+	var mutation CreateProjectV2Mutation
+	input := CreateProjectV2Input{
+		OwnerID: githubv4.ID(ownerID),
+		Title:   githubv4.String(title),
+	}
+	err := c.GraphQL.Mutate(ctx, &mutation, input, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create project %q: %w", title, err)
+	}
+	return mutation.CreateProjectV2.ProjectV2.ID, nil
+}
+
+// LinkProjectV2ToRepo mutation types
+
+type LinkProjectV2ToRepoMutation struct {
+	LinkProjectV2ToRepository struct {
+		Repository struct {
+			ID string
+		}
+	} `graphql:"linkProjectV2ToRepository(input: $input)"`
+}
+
+type LinkProjectV2ToRepositoryInput struct {
+	ProjectID    githubv4.ID `json:"projectId"`
+	RepositoryID githubv4.ID `json:"repositoryId"`
+}
+
+// LinkProjectV2ToRepo links a Projects V2 board to a repository.
+func (c *Client) LinkProjectV2ToRepo(ctx context.Context, projectID, repoID string) error {
+	var mutation LinkProjectV2ToRepoMutation
+	input := LinkProjectV2ToRepositoryInput{
+		ProjectID:    githubv4.ID(projectID),
+		RepositoryID: githubv4.ID(repoID),
+	}
+	err := c.GraphQL.Mutate(ctx, &mutation, input, nil)
+	if err != nil {
+		return fmt.Errorf("failed to link project to repo: %w", err)
+	}
+	return nil
 }

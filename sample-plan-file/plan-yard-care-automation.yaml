@@ -1,0 +1,167 @@
+project: "yard-care-automation"
+repository: "goblinsan/yard-care-automation"
+
+milestones:
+  - title: "Phase 1: Foundation and Planning"
+    due_on: "2026-04-13"
+    description: "Establish the Next.js application, define the yard automation domain model, and create the first end-to-end management flows for zones, schedules, and ideas backlog."
+  - title: "Phase 2: Automation Engine and Integrations"
+    due_on: "2026-05-11"
+    description: "Build the scheduling engine, manual run controls, notification pipeline, and initial hardware integration layer so the app can drive real yard care routines."
+  - title: "Phase 3: Intelligence, Reliability, and Launch"
+    due_on: "2026-06-08"
+    description: "Add weather-aware rules, observability, safety guardrails, and polished deployment workflows so the system is reliable enough for real-world use."
+
+epics:
+  - title: "Bootstrap the web app and developer workflow"
+    body: "Set up a production-ready Next.js application with TypeScript and Tailwind CSS, define the base project structure, and add the tooling needed to move quickly without accumulating avoidable setup debt."
+    milestone: "Phase 1: Foundation and Planning"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Initialize Next.js app with TypeScript, Tailwind CSS, ESLint, and app router"
+        body: "Create the yard-care-automation repository scaffold using Next.js with TypeScript and Tailwind CSS, enable the app router, and commit a clean baseline that can host both dashboard pages and API routes."
+        labels: ["enhancement"]
+      - title: "Add environment configuration and secrets handling for local and production"
+        body: "Create .env.example, document required environment variables, and wire typed config loading for database, auth, notifications, and hardware integration keys so contributors can run the app safely."
+        labels: ["enhancement"]
+      - title: "Set up CI checks for linting, type checking, and production build"
+        body: "Create a GitHub Actions workflow that runs npm install, lint, TypeScript checks, and Next.js build on pull requests so broken dashboard or API changes are caught before merge."
+        labels: ["enhancement"]
+
+  - title: "Model yard zones, devices, and routines"
+    body: "Define the core data structures for how the system thinks about the yard, including zones, devices, watering plans, mowing tasks, and reusable automation routines."
+    milestone: "Phase 1: Foundation and Planning"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Design initial schema for zones, controllers, schedules, and activity logs"
+        body: "Create a concrete schema for yard zones, valves, relays, controllers, schedules, runs, and manual overrides so the app can support irrigation-first automation without blocking future yard tasks."
+        labels: ["enhancement"]
+      - title: "Add typed domain models and validation with Zod"
+        body: "Implement shared TypeScript types and Zod validation for zone definitions, schedule payloads, and run commands so the UI and API routes stay in sync."
+        labels: ["enhancement"]
+      - title: "Seed example yard layouts and automation routines"
+        body: "Create seed data representing a realistic home yard with front lawn, back lawn, beds, and drip zones so the dashboard can be demoed before real hardware is connected."
+        labels: ["enhancement"]
+
+  - title: "Build the planning dashboard and CRUD flows"
+    body: "Create the first usable UI for entering ideas, defining zones, and managing recurring yard-care plans so the project delivers visible progress quickly."
+    milestone: "Phase 1: Foundation and Planning"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Create dashboard layout with navigation for zones, schedules, runs, and settings"
+        body: "Build a Tailwind CSS dashboard shell with responsive sidebar navigation, page headers, and cards for the main yard automation sections so future features have a consistent home."
+        labels: ["enhancement"]
+      - title: "Implement zone management screens with create, edit, and archive actions"
+        body: "Build Next.js pages and forms that let you add zones, label them by purpose, assign controller outputs, set runtime limits, and archive zones without deleting history."
+        labels: ["enhancement"]
+      - title: "Implement schedule editor for watering days, start windows, and duration"
+        body: "Create a schedule builder UI that supports day-of-week rules, preferred start times, per-zone durations, and pause toggles so plans can be created without touching raw JSON."
+        labels: ["enhancement"]
+
+  - title: "Create the automation execution engine"
+    body: "Implement the backend job flow that interprets saved schedules, decides what should run, and records the result of each automated or manual yard-care action."
+    milestone: "Phase 2: Automation Engine and Integrations"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Build scheduler service for due jobs and execution windows"
+        body: "Create a server-side scheduling service that scans saved rules, determines which zone runs are due, and emits execution jobs while respecting configured start windows and skip conditions."
+        labels: ["enhancement"]
+      - title: "Add run history tracking for queued, running, completed, skipped, and failed states"
+        body: "Persist lifecycle events for every automation run so the dashboard can explain exactly what happened, when it happened, and why a run may have been skipped or stopped."
+        labels: ["enhancement"]
+      - title: "Implement manual run and emergency stop API endpoints"
+        body: "Create secure Next.js API routes that allow manual zone runs, stop commands, and temporary overrides so you can test ideas and intervene safely during live execution."
+        labels: ["enhancement"]
+
+  - title: "Integrate notifications and operator feedback"
+    body: "Make the system communicate clearly when something starts, fails, or needs attention so yard automation feels dependable instead of mysterious."
+    milestone: "Phase 2: Automation Engine and Integrations"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Add notification preferences for email, SMS, or push-ready channels"
+        body: "Create settings for choosing which alerts are sent, through which channels, and during what quiet hours so status messaging is useful instead of noisy."
+        labels: ["enhancement"]
+      - title: "Send alerts for failed runs, skipped weather rules, and controller disconnects"
+        body: "Implement notification triggers for the highest-value operational events so you know when hardware is offline, watering was prevented, or a schedule did not complete."
+        labels: ["enhancement"]
+      - title: "Build dashboard activity feed with human-readable event summaries"
+        body: "Show recent automation decisions and operator actions in a timeline feed so the app provides quick visibility without needing to inspect raw logs."
+        labels: ["enhancement"]
+
+  - title: "Connect the app to real hardware adapters"
+    body: "Create a hardware abstraction layer that can start with simple relay-based controllers and grow toward more sophisticated devices without rewriting the application."
+    milestone: "Phase 2: Automation Engine and Integrations"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Define controller adapter interface for relays, smart plugs, and irrigation hubs"
+        body: "Create TypeScript interfaces and service boundaries so the automation engine can talk to different controller types through a common contract."
+        labels: ["enhancement"]
+      - title: "Implement first adapter for a simple HTTP or MQTT relay controller"
+        body: "Build an initial adapter that can toggle real outputs through HTTP or MQTT so the project reaches a minimum viable hardware integration quickly."
+        labels: ["enhancement"]
+      - title: "Add controller test page for ping, on or off toggle, and zone mapping"
+        body: "Create an admin UI to verify connectivity, manually toggle outputs, and confirm each configured zone maps to the intended physical hardware channel."
+        labels: ["enhancement"]
+
+  - title: "Add weather-aware and sensor-aware automation rules"
+    body: "Make the system smarter by incorporating weather forecasts and optional soil or rain data so the yard gets care when needed, not just on a blind timer."
+    milestone: "Phase 3: Intelligence, Reliability, and Launch"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Integrate forecast data for rain prediction and temperature thresholds"
+        body: "Connect a weather data provider and store the forecast signals needed to skip watering before rain, prevent freezing-condition runs, and adjust behavior during extreme heat."
+        labels: ["enhancement"]
+      - title: "Implement rule engine for skip, delay, and shorten decisions"
+        body: "Build a rule evaluation layer that can decide whether to skip, delay, shorten, or proceed with a scheduled run based on weather and future sensor inputs."
+        labels: ["enhancement"]
+      - title: "Prepare sensor input model for rain, soil moisture, and flow sensors"
+        body: "Add schema, UI placeholders, and service hooks for optional rain, soil moisture, and flow sensors so smarter automations can be layered in without reworking the data model."
+        labels: ["enhancement"]
+
+  - title: "Harden safety, observability, and recovery workflows"
+    body: "Reduce the chance of costly mistakes by adding guardrails, diagnostics, and recovery tooling appropriate for a system that can affect water use and outdoor hardware."
+    milestone: "Phase 3: Intelligence, Reliability, and Launch"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Enforce maximum runtime, cooldowns, and overlapping zone protections"
+        body: "Add server-side safety checks that prevent overwatering, excessively long runs, and invalid simultaneous zone activations that could exceed controller or plumbing limits."
+        labels: ["enhancement"]
+      - title: "Add structured logging and error reporting for automation jobs and adapters"
+        body: "Instrument the Next.js app and execution services with structured logs and error capture so failures in schedules, notifications, or controllers can be debugged quickly."
+        labels: ["enhancement"]
+      - title: "Create recovery tools for retrying failed runs and clearing stuck controller states"
+        body: "Build operator actions for retrying failed jobs, marking false failures resolved, and resetting controllers that report inconsistent state after interrupted runs."
+        labels: ["enhancement"]
+
+  - title: "Polish deployment, authentication, and launch readiness"
+    body: "Prepare the app to be used consistently by securing access, documenting setup, and making deployment repeatable for both dashboard and automation services."
+    milestone: "Phase 3: Intelligence, Reliability, and Launch"
+    status: "Todo"
+    labels: ["enhancement"]
+    assignees: ["goblinsan"]
+    children:
+      - title: "Add authentication and role-based access for operators and admins"
+        body: "Protect the dashboard and control endpoints with authentication, and introduce simple role checks so sensitive actions like manual runs and settings changes are restricted appropriately."
+        labels: ["enhancement"]
+      - title: "Document local setup, controller configuration, and deployment steps"
+        body: "Write a practical README covering Next.js local development, environment setup, hardware adapter configuration, and how to deploy the dashboard and automation services."
+        labels: ["enhancement"]
+      - title: "Create production deployment target and smoke test checklist"
+        body: "Choose an initial hosting approach, add deployment configuration, and create a smoke test checklist covering login, zone editing, manual runs, scheduled execution, and notifications."
+        labels: ["enhancement"]

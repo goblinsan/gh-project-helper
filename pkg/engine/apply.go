@@ -18,12 +18,31 @@ type GitHubClient interface {
 	GetProjectV2StatusFieldOptions(ctx context.Context, projectID githubv4.ID) (githubv4.ID, map[string]string, error)
 	GetOrCreateMilestone(ctx context.Context, owner, repo, title, description, dueOn string) (*gogithub.Milestone, error)
 	GetMilestoneID(ctx context.Context, owner, name string, number int) (string, error)
-	FindIssueByTitle(ctx context.Context, owner, repo, title string) (int, string, error)
+	ListAllIssues(ctx context.Context, owner, repo string) (map[string]ghclient.IssueRef, error)
 	GetOrCreateLabel(ctx context.Context, owner, repo, labelName string) (githubv4.ID, error)
 	GetUserID(ctx context.Context, login string) (githubv4.ID, error)
 	CreateIssue(ctx context.Context, input githubv4.CreateIssueInput) (*ghclient.CreateIssueMutation, error)
 	AddIssueToProjectV2(ctx context.Context, projectID, contentID githubv4.ID) (*ghclient.AddProjectV2ItemMutation, error)
+	AddSubIssue(ctx context.Context, parentIssueID, childIssueID githubv4.ID) error
 	UpdateProjectV2ItemStatus(ctx context.Context, projectID, itemID, fieldID githubv4.ID, optionID string) error
+
+	// Resource verification & creation
+	RepoExists(ctx context.Context, owner, name string) (bool, error)
+	SearchRepos(ctx context.Context, owner, query string) ([]ghclient.RepoSearchResult, error)
+	CreateRepo(ctx context.Context, owner, name string) error
+	HasReadme(ctx context.Context, owner, name string) (bool, error)
+	CreateReadme(ctx context.Context, owner, name string) error
+	GetOwnerID(ctx context.Context, login string) (string, error)
+	CreateProjectV2(ctx context.Context, ownerID, title string) (string, error)
+	LinkProjectV2ToRepo(ctx context.Context, projectID, repoID string) error
+}
+
+// Prompter abstracts interactive user prompts so the engine stays testable.
+type Prompter interface {
+	// Confirm asks a yes/no question and returns true for yes.
+	Confirm(msg string) (bool, error)
+	// Select presents choices and returns the selected index (-1 for none/cancel).
+	Select(msg string, choices []string) (int, error)
 }
 
 // Ensure *github.Client satisfies the interface at compile time.
@@ -31,7 +50,8 @@ var _ GitHubClient = (*ghclient.Client)(nil)
 
 // Options configures the behavior of ApplyPlan.
 type Options struct {
-	DryRun bool
+	DryRun   bool
+	Prompter Prompter
 }
 
 // Report summarizes the results of an ApplyPlan execution.
@@ -65,21 +85,43 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 		fmt.Printf("[dry-run] Project: %s\n", plan.Project)
 	}
 
-	// Resolve Context
-	repoID, err := client.GetRepositoryID(ctx, owner, repo)
+	// ── Pre-flight: ensure repository exists ──
+	repoID, err := ensureRepo(ctx, client, owner, repo, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get repository id: %w", err)
+		return nil, err
 	}
 
-	projectID, err := client.GetProjectV2ID(ctx, owner, plan.Project)
+	// ── Pre-flight: ensure repo has a README ──
+	if err := ensureReadme(ctx, client, owner, repo, opts); err != nil {
+		return nil, err
+	}
+
+	// ── Pre-flight: ensure project exists ──
+	projectID, err := ensureProject(ctx, client, owner, plan.Project, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get project id: %w", err)
+		return nil, err
 	}
 
 	// Get project status field options
-	statusFieldID, statusOptions, err := client.GetProjectV2StatusFieldOptions(ctx, githubv4.ID(projectID))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get project status field options: %w", err)
+	var statusFieldID githubv4.ID
+	var statusOptions map[string]string
+	if opts.DryRun {
+		statusOptions = make(map[string]string)
+		fmt.Println("[dry-run] Skipping project status field lookup")
+	} else {
+		statusFieldID, statusOptions, err = client.GetProjectV2StatusFieldOptions(ctx, githubv4.ID(projectID))
+		if err != nil {
+			return nil, fmt.Errorf("failed to get project status field options: %w", err)
+		}
+	}
+
+	// Pre-fetch all existing issues once to avoid Search API rate limits
+	issueCache := make(map[string]ghclient.IssueRef)
+	if !opts.DryRun {
+		issueCache, err = client.ListAllIssues(ctx, owner, repo)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list existing issues: %w", err)
+		}
 	}
 
 	// Milestone Sync
@@ -115,11 +157,12 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 					fmt.Printf("[dry-run]   Status: %s\n", epic.Status)
 				}
 			}
+			fmt.Printf("[dry-run]   Label: Epic (auto)\n")
 			for _, label := range epic.Labels {
 				fmt.Printf("[dry-run]   Label: %s\n", label)
 			}
 			for _, child := range epic.Children {
-				fmt.Printf("[dry-run]   Would create child issue: %s\n", child.Title)
+				fmt.Printf("[dry-run]   Would create child issue: %s (sub-issue of epic)\n", child.Title)
 				for _, label := range child.Labels {
 					fmt.Printf("[dry-run]     Label: %s\n", label)
 				}
@@ -128,15 +171,18 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 		}
 		// Step A (Children)
 		var childIssues []string
+		var childNodeIDs []githubv4.ID
 		for _, child := range epic.Children {
-			// Idempotency: check if child issue already exists
-			existingNum, existingNodeID, err := client.FindIssueByTitle(ctx, owner, repo, child.Title)
-			if err != nil {
-				return nil, fmt.Errorf("failed to check for existing issue %q: %w", child.Title, err)
+			// Idempotency: check if child issue already exists (from pre-fetched cache)
+			var existingNum int
+			var existingNodeID string
+			if ref, ok := issueCache[child.Title]; ok {
+				existingNum, existingNodeID = ref.Number, ref.NodeID
 			}
 			if existingNum > 0 {
 				fmt.Printf("  Skipping child issue (already exists): #%d %s\n", existingNum, child.Title)
 				childIssues = append(childIssues, fmt.Sprintf("- [ ] #%d", existingNum))
+				childNodeIDs = append(childNodeIDs, githubv4.ID(existingNodeID))
 				report.IssuesSkipped++
 
 				// Still ensure it's on the project board
@@ -173,6 +219,7 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 				return nil, fmt.Errorf("failed to create child issue: %w", err)
 			}
 			childIssues = append(childIssues, fmt.Sprintf("- [ ] #%d", issue.CreateIssue.Issue.Number))
+			childNodeIDs = append(childNodeIDs, issue.CreateIssue.Issue.ID)
 			report.IssuesCreated++
 
 			// Add child issue to project
@@ -192,10 +239,11 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 			}
 		}
 
-		// Idempotency: check if epic issue already exists
-		existingEpicNum, existingEpicNodeID, err := client.FindIssueByTitle(ctx, owner, repo, epic.Title)
-		if err != nil {
-			return nil, fmt.Errorf("failed to check for existing epic %q: %w", epic.Title, err)
+		// Idempotency: check if epic issue already exists (from pre-fetched cache)
+		var existingEpicNum int
+		var existingEpicNodeID string
+		if ref, ok := issueCache[epic.Title]; ok {
+			existingEpicNum, existingEpicNodeID = ref.Number, ref.NodeID
 		}
 		if existingEpicNum > 0 {
 			fmt.Printf("Skipping epic (already exists): #%d %s\n", existingEpicNum, epic.Title)
@@ -214,7 +262,7 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 		}
 
 		// Step B (Epic Body)
-		epicBody := epic.Body + "\n\n" + strings.Join(childIssues, "\n")
+		epicBody := epic.Body + "\n\n## Sub-issues\n\n" + strings.Join(childIssues, "\n")
 
 		// Step C (Create Epic)
 		var milestoneID *githubv4.ID
@@ -225,8 +273,12 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 			}
 		}
 
-		// Resolve label IDs
-		var labelIDs []githubv4.ID
+		// Resolve label IDs — always include "Epic" label for visual identification
+		epicLabelID, err := client.GetOrCreateLabel(ctx, owner, repo, "Epic")
+		if err != nil {
+			return nil, fmt.Errorf("failed to get or create Epic label: %w", err)
+		}
+		labelIDs := []githubv4.ID{epicLabelID}
 		for _, labelName := range epic.Labels {
 			labelID, err := client.GetOrCreateLabel(ctx, owner, repo, labelName)
 			if err != nil {
@@ -274,10 +326,168 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 			}
 		}
 
+		// Step E (Sub-issue Relationships)
+		for _, childNodeID := range childNodeIDs {
+			err := client.AddSubIssue(ctx, epicIssue.CreateIssue.Issue.ID, childNodeID)
+			if err != nil {
+				fmt.Printf("  Warning: failed to add sub-issue relationship: %v\n", err)
+			}
+		}
+
 		report.EpicsCreated++
 		report.EpicURLs = append(report.EpicURLs, epicIssue.CreateIssue.Issue.URL.String())
 		fmt.Printf("Created epic: %s (%s)\n", epic.Title, epicIssue.CreateIssue.Issue.URL.String())
 	}
 
+	// ── Post-flight: link project to repository ──
+	if !opts.DryRun {
+		if err := client.LinkProjectV2ToRepo(ctx, projectID, repoID); err != nil {
+			fmt.Printf("Warning: failed to link project to repo (may already be linked): %v\n", err)
+		} else {
+			fmt.Printf("Linked project %q to repository %s/%s\n", plan.Project, owner, repo)
+		}
+	} else {
+		fmt.Printf("[dry-run] Would link project %q to repository %s/%s\n", plan.Project, owner, repo)
+	}
+
 	return report, nil
+}
+
+// ensureRepo verifies the repository exists. If not, it searches for similar names,
+// prompts the user, and optionally creates a new repo.
+func ensureRepo(ctx context.Context, client GitHubClient, owner, repo string, opts Options) (string, error) {
+	exists, err := client.RepoExists(ctx, owner, repo)
+	if err != nil {
+		return "", fmt.Errorf("failed to check if repo exists: %w", err)
+	}
+
+	if exists {
+		repoID, err := client.GetRepositoryID(ctx, owner, repo)
+		if err != nil {
+			return "", fmt.Errorf("failed to get repository id: %w", err)
+		}
+		return repoID, nil
+	}
+
+	fmt.Printf("Repository %s/%s does not exist.\n", owner, repo)
+
+	if opts.DryRun {
+		fmt.Printf("[dry-run] Would search for similar repos and potentially create %s/%s\n", owner, repo)
+		return "dry-run-repo-id", nil
+	}
+
+	if opts.Prompter == nil {
+		return "", fmt.Errorf("repository %s/%s not found and no interactive prompter available", owner, repo)
+	}
+
+	// Search for similar repos
+	similar, err := client.SearchRepos(ctx, owner, repo)
+	if err != nil {
+		fmt.Printf("Warning: could not search for similar repos: %v\n", err)
+	}
+
+	if len(similar) > 0 {
+		fmt.Println("Found similar repositories:")
+		choices := make([]string, 0, len(similar)+1)
+		for _, r := range similar {
+			desc := ""
+			if r.Description != "" {
+				desc = " — " + r.Description
+			}
+			choices = append(choices, r.FullName+desc)
+		}
+		choices = append(choices, fmt.Sprintf("Create new repo: %s/%s", owner, repo))
+
+		idx, err := opts.Prompter.Select("Choose an existing repo or create a new one:", choices)
+		if err != nil {
+			return "", fmt.Errorf("prompt failed: %w", err)
+		}
+		if idx < 0 {
+			return "", fmt.Errorf("cancelled by user")
+		}
+
+		if idx < len(similar) {
+			// User chose an existing similar repo — update owner/repo from full name
+			parts := strings.SplitN(similar[idx].FullName, "/", 2)
+			if len(parts) == 2 {
+				fmt.Printf("Using existing repository: %s\n", similar[idx].FullName)
+				repoID, err := client.GetRepositoryID(ctx, parts[0], parts[1])
+				if err != nil {
+					return "", fmt.Errorf("failed to get repository id: %w", err)
+				}
+				return repoID, nil
+			}
+		}
+	} else {
+		ok, err := opts.Prompter.Confirm(fmt.Sprintf("No similar repos found. Create %s/%s?", owner, repo))
+		if err != nil {
+			return "", fmt.Errorf("prompt failed: %w", err)
+		}
+		if !ok {
+			return "", fmt.Errorf("cancelled by user")
+		}
+	}
+
+	// Create the repo
+	fmt.Printf("Creating repository %s/%s...\n", owner, repo)
+	if err := client.CreateRepo(ctx, owner, repo); err != nil {
+		return "", err
+	}
+	fmt.Printf("Created repository %s/%s\n", owner, repo)
+
+	repoID, err := client.GetRepositoryID(ctx, owner, repo)
+	if err != nil {
+		return "", fmt.Errorf("failed to get repository id after creation: %w", err)
+	}
+	return repoID, nil
+}
+
+// ensureReadme makes sure the repository has a README file.
+func ensureReadme(ctx context.Context, client GitHubClient, owner, repo string, opts Options) error {
+	if opts.DryRun {
+		fmt.Printf("[dry-run] Would check and ensure README exists in %s/%s\n", owner, repo)
+		return nil
+	}
+
+	has, err := client.HasReadme(ctx, owner, repo)
+	if err != nil {
+		return fmt.Errorf("failed to check for README: %w", err)
+	}
+	if has {
+		return nil
+	}
+
+	fmt.Printf("Repository %s/%s has no README — creating one...\n", owner, repo)
+	if err := client.CreateReadme(ctx, owner, repo); err != nil {
+		return fmt.Errorf("failed to create README: %w", err)
+	}
+	fmt.Printf("Created README.md in %s/%s\n", owner, repo)
+	return nil
+}
+
+// ensureProject verifies the project exists. If not, creates it.
+func ensureProject(ctx context.Context, client GitHubClient, owner, title string, opts Options) (string, error) {
+	projectID, err := client.GetProjectV2ID(ctx, owner, title)
+	if err == nil {
+		return projectID, nil
+	}
+
+	fmt.Printf("Project %q not found for %s — creating it...\n", title, owner)
+
+	if opts.DryRun {
+		fmt.Printf("[dry-run] Would create project %q under %s\n", title, owner)
+		return "dry-run-project-id", nil
+	}
+
+	ownerID, err := client.GetOwnerID(ctx, owner)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve owner ID for %s: %w", owner, err)
+	}
+
+	projectID, err = client.CreateProjectV2(ctx, ownerID, title)
+	if err != nil {
+		return "", err
+	}
+	fmt.Printf("Created project %q (ID: %s)\n", title, projectID)
+	return projectID, nil
 }
