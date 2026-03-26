@@ -58,8 +58,10 @@ func (p *cliPrompter) Select(msg string, choices []string) (int, error) {
 func init() {
 	rootCmd.AddCommand(applyCmd)
 	applyCmd.Flags().StringP("file", "f", "", "The plan file to apply")
-	applyCmd.MarkFlagRequired("file")
+	_ = applyCmd.MarkFlagRequired("file")
 	applyCmd.Flags().Bool("dry-run", false, "Preview what would be created without making changes")
+	applyCmd.Flags().Bool("create-repo-if-missing", false, "Create the requested repository automatically when it does not exist and no similar matches are found")
+	applyCmd.Flags().String("repository-override", "", "Override the plan repository with an explicit owner/repo target")
 }
 
 var applyCmd = &cobra.Command{
@@ -69,29 +71,33 @@ var applyCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		filePath, _ := cmd.Flags().GetString("file")
 
-		// Read the YAML file
 		yamlFile, err := os.ReadFile(filePath)
 		if err != nil {
 			return fmt.Errorf("failed to read file: %w", err)
 		}
 
-		// Unmarshal the YAML file into a Plan struct
 		var plan types.Plan
 		err = yaml.Unmarshal(yamlFile, &plan)
 		if err != nil {
 			return fmt.Errorf("failed to unmarshal YAML: %w", err)
 		}
 
-		// Create a new GitHub client
+		repositoryOverride, _ := cmd.Flags().GetString("repository-override")
+		if repositoryOverride != "" {
+			plan.Repository = repositoryOverride
+		}
+
 		client, err := github.NewClient()
 		if err != nil {
 			return fmt.Errorf("failed to create github client: %w", err)
 		}
 
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		createRepoIfMissing, _ := cmd.Flags().GetBool("create-repo-if-missing")
 		report, err := engine.ApplyPlan(context.Background(), client, plan, engine.Options{
-			DryRun:   dryRun,
-			Prompter: newCLIPrompter(),
+			DryRun:              dryRun,
+			Prompter:            newCLIPrompter(),
+			CreateRepoIfMissing: createRepoIfMissing,
 		})
 		if err != nil {
 			return err

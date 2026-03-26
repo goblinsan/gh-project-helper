@@ -50,8 +50,9 @@ var _ GitHubClient = (*ghclient.Client)(nil)
 
 // Options configures the behavior of ApplyPlan.
 type Options struct {
-	DryRun   bool
-	Prompter Prompter
+	DryRun              bool
+	Prompter            Prompter
+	CreateRepoIfMissing bool
 }
 
 // Report summarizes the results of an ApplyPlan execution.
@@ -376,17 +377,20 @@ func ensureRepo(ctx context.Context, client GitHubClient, owner, repo string, op
 		return "dry-run-repo-id", nil
 	}
 
-	if opts.Prompter == nil {
-		return "", fmt.Errorf("repository %s/%s not found and no interactive prompter available", owner, repo)
-	}
-
-	// Search for similar repos
 	similar, err := client.SearchRepos(ctx, owner, repo)
 	if err != nil {
-		fmt.Printf("Warning: could not search for similar repos: %v\n", err)
+		return "", fmt.Errorf("failed to search for similar repos: %w", err)
 	}
 
 	if len(similar) > 0 {
+		if opts.Prompter == nil {
+			matches := make([]string, 0, len(similar))
+			for _, match := range similar {
+				matches = append(matches, match.FullName)
+			}
+			return "", fmt.Errorf("repository %s/%s not found; similar repositories exist: %s", owner, repo, strings.Join(matches, ", "))
+		}
+
 		fmt.Println("Found similar repositories:")
 		choices := make([]string, 0, len(similar)+1)
 		for _, r := range similar {
@@ -407,7 +411,6 @@ func ensureRepo(ctx context.Context, client GitHubClient, owner, repo string, op
 		}
 
 		if idx < len(similar) {
-			// User chose an existing similar repo — update owner/repo from full name
 			parts := strings.SplitN(similar[idx].FullName, "/", 2)
 			if len(parts) == 2 {
 				fmt.Printf("Using existing repository: %s\n", similar[idx].FullName)
@@ -418,7 +421,13 @@ func ensureRepo(ctx context.Context, client GitHubClient, owner, repo string, op
 				return repoID, nil
 			}
 		}
-	} else {
+	}
+
+	if !opts.CreateRepoIfMissing {
+		if opts.Prompter == nil {
+			return "", fmt.Errorf("repository %s/%s not found and createRepoIfMissing was not enabled", owner, repo)
+		}
+
 		ok, err := opts.Prompter.Confirm(fmt.Sprintf("No similar repos found. Create %s/%s?", owner, repo))
 		if err != nil {
 			return "", fmt.Errorf("prompt failed: %w", err)
@@ -428,7 +437,6 @@ func ensureRepo(ctx context.Context, client GitHubClient, owner, repo string, op
 		}
 	}
 
-	// Create the repo
 	fmt.Printf("Creating repository %s/%s...\n", owner, repo)
 	if err := client.CreateRepo(ctx, owner, repo); err != nil {
 		return "", err

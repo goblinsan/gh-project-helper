@@ -14,12 +14,12 @@ import (
 
 // mockClient implements GitHubClient for testing.
 type mockClient struct {
-	issueCounter   int
-	createdIssues  []string
-	projectItems   []string
-	statusUpdates  []string
-	labelRequests  []string
-	subIssueLinks  [][2]string // [parentID, childID]
+	issueCounter  int
+	createdIssues []string
+	projectItems  []string
+	statusUpdates []string
+	labelRequests []string
+	subIssueLinks [][2]string // [parentID, childID]
 
 	// Pre-flight tracking
 	repoExists       bool
@@ -499,5 +499,93 @@ func TestApplyPlan_SimilarRepoSelected(t *testing.T) {
 	}
 	if report.EpicsCreated != 1 {
 		t.Errorf("expected 1 epic, got %d", report.EpicsCreated)
+	}
+}
+
+func TestPreflightPlan_ReadyOnExactMatch(t *testing.T) {
+	mock := newMockClient()
+	report, err := PreflightPlan(context.Background(), mock, types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/repo",
+	})
+	if err != nil {
+		t.Fatalf("PreflightPlan failed: %v", err)
+	}
+	if report.Status != PreflightStatusReady {
+		t.Fatalf("expected ready, got %s", report.Status)
+	}
+	if !report.Repository.ExactMatch {
+		t.Fatal("expected exact match")
+	}
+}
+
+func TestPreflightPlan_RequiresRepoResolutionWhenSimilarExists(t *testing.T) {
+	mock := newMockClient()
+	mock.repoExists = false
+	mock.searchRepoResult = []ghclient.RepoSearchResult{{FullName: "owner/repo-similar", Description: "similar"}}
+
+	report, err := PreflightPlan(context.Background(), mock, types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/repo",
+	})
+	if err != nil {
+		t.Fatalf("PreflightPlan failed: %v", err)
+	}
+	if report.Status != PreflightStatusRepoResolutionRequired {
+		t.Fatalf("expected repo_resolution_required, got %s", report.Status)
+	}
+	if len(report.Repository.Similar) != 1 {
+		t.Fatalf("expected 1 similar repo, got %d", len(report.Repository.Similar))
+	}
+}
+
+func TestPreflightPlan_RequiresCreateConfirmationWhenNoSimilarExists(t *testing.T) {
+	mock := newMockClient()
+	mock.repoExists = false
+
+	report, err := PreflightPlan(context.Background(), mock, types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/repo",
+	})
+	if err != nil {
+		t.Fatalf("PreflightPlan failed: %v", err)
+	}
+	if report.Status != PreflightStatusCreateRepoConfirmationRequired {
+		t.Fatalf("expected create_repo_confirmation_required, got %s", report.Status)
+	}
+}
+
+func TestApplyPlan_CreateRepoIfMissingWithoutPrompt(t *testing.T) {
+	mock := newMockClient()
+	mock.repoExists = false
+
+	plan := types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/new-repo",
+		Epics:      []types.Epic{{Title: "Epic 1", Body: "body"}},
+	}
+
+	_, err := ApplyPlan(context.Background(), mock, plan, Options{CreateRepoIfMissing: true})
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if !mock.repoCreated {
+		t.Fatal("expected repo to be created")
+	}
+}
+
+func TestApplyPlan_CreateRepoIfMissingRejectsWhenSimilarExistsWithoutResolution(t *testing.T) {
+	mock := newMockClient()
+	mock.repoExists = false
+	mock.searchRepoResult = []ghclient.RepoSearchResult{{FullName: "owner/repo-similar", Description: "similar"}}
+
+	plan := types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/repo",
+	}
+
+	_, err := ApplyPlan(context.Background(), mock, plan, Options{CreateRepoIfMissing: true})
+	if err == nil {
+		t.Fatal("expected error when similar repos exist without explicit resolution")
 	}
 }
