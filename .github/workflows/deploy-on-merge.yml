@@ -1,0 +1,25 @@
+name: Deploy On Merge
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: gh-project-helper-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on:
+      - self-hosted
+      - gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - run: mkdir -p /home/jimmothy/.local/bin
+      - run: go build -ldflags "-s -w" -o /home/jimmothy/.local/bin/ghp ./cmd/gh-project-helper
+      - run: chmod 755 /home/jimmothy/.local/bin/ghp

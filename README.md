@@ -91,3 +91,8 @@ go test ./...
 
 See LICENSE file for details.
 
+
+
+## Gateway Deployment
+
+On the gateway host, this repo is intended to have its own repo-level GitHub Actions runner. Merges to `main` should rebuild the helper binary into `/home/jimmothy/.local/bin/ghp`. `gateway-api` mounts that host directory and prefers the runner-managed binary when present, so helper updates can go live without rebuilding the API image.
