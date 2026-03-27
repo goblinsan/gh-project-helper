@@ -96,3 +96,6 @@ See LICENSE file for details.
 ## Gateway Deployment
 
 On the gateway host, this repo is intended to have its own repo-level GitHub Actions runner. Merges to `main` should rebuild the helper binary into `/home/jimmothy/.local/bin/ghp`. The workflow builds a static Linux binary (`CGO_ENABLED=0`) so the helper can run inside the Alpine-based `gateway-api` container. `gateway-api` mounts that host directory and prefers the runner-managed binary when present, so helper updates can go live without rebuilding the API image.
+
+
+When `ghp` creates a repository, it initializes the repository with a README. The engine still performs a README check afterward as a safety net for existing repos without one.

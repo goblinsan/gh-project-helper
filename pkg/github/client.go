@@ -473,9 +473,9 @@ func (c *Client) CreateRepo(ctx context.Context, owner, name string) error {
 	}
 
 	repo := &github.Repository{
-		Name:    github.String(name),
-		Private: github.Bool(false),
-		AutoInit: github.Bool(false),
+		Name:     github.String(name),
+		Private:  github.Bool(false),
+		AutoInit: github.Bool(true),
 	}
 
 	if user.GetLogin() == owner {
