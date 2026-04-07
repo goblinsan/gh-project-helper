@@ -19,11 +19,15 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 }
 
+func printVersion() {
+	fmt.Printf("gh-project-helper version %s, commit %s, built at %s\n", Version, Commit, Date)
+}
+
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version number of gh-project-helper",
 	Long:  `All software has versions. This is gh-project-helper's`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("gh-project-helper version %s, commit %s, built at %s\n", Version, Commit, Date)
+		printVersion()
 	},
 }

@@ -9,6 +9,7 @@ import (
 )
 
 var cfgFile string
+var showVersion bool
 
 var (
 	rootCmd = &cobra.Command{
@@ -17,9 +18,12 @@ var (
 		Long: `gh-project-helper is a MCP-compliant CLI tool that helps you convert
 plans into GitHub project milestones and issues. It uses the GitHub API
 and GraphQL to interact with GitHub Projects V2.`,
-		Run: func(cmd *cobra.Command, args []string) {
-			// Default action when no subcommand is specified
-			cmd.Help()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if showVersion {
+				printVersion()
+				return nil
+			}
+			return cmd.Help()
 		},
 	}
 )
@@ -36,6 +40,7 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.gh-project-helper.yaml)")
+	rootCmd.Flags().BoolVar(&showVersion, "version", false, "print the version number and exit")
 }
 
 func initConfig() {
