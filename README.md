@@ -20,6 +20,8 @@ A Model Context Protocol (MCP) compliant CLI tool to convert plans into GitHub p
 go build -o gh-project-helper ./cmd/gh-project-helper
 ```
 
+Standard builds from a git checkout automatically include VCS metadata, so `gh-project-helper --version` can report the current revision and dirty state without extra linker flags.
+
 ## Configuration
 
 The tool can be configured via:
@@ -41,10 +43,11 @@ token: ghp_yourGitHubPersonalAccessToken
 ./gh-project-helper --help
 
 # Check version
-./ghp version
+./gh-project-helper --version
+./gh-project-helper version
 
 # Authenticate and display user info
-./ghp whoami --token YOUR_GITHUB_TOKEN
+./gh-project-helper whoami
 ```
 
 ## Project Structure
