@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/go-github/v66/github"
 	"github.com/shurcooL/githubv4"
+	"github.com/spf13/viper"
 	"golang.org/x/oauth2"
 )
 
@@ -50,9 +51,15 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
-// GetToken retrieves the GitHub token from the environment or `gh` CLI
+// GetToken retrieves the GitHub token from env/config or falls back to `gh auth token`.
 func GetToken() (string, error) {
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		return token, nil
+	}
+	if token := os.Getenv("GH_PROJECT_HELPER_TOKEN"); token != "" {
+		return token, nil
+	}
+	if token := strings.TrimSpace(viper.GetString("token")); token != "" {
 		return token, nil
 	}
 
@@ -298,6 +305,13 @@ func (c *Client) GetOrCreateLabel(ctx context.Context, owner, repo, labelName st
 				Name: github.String(labelName),
 			})
 			if createErr != nil {
+				// If another run created the label first, refetch and treat it as success.
+				if strings.Contains(strings.ToLower(createErr.Error()), "already_exists") {
+					existing, _, fetchErr := c.REST.Issues.GetLabel(ctx, owner, repo, labelName)
+					if fetchErr == nil {
+						return existing.GetNodeID(), nil
+					}
+				}
 				return nil, fmt.Errorf("failed to create label %s: %w", labelName, createErr)
 			}
 			return newLabel.GetNodeID(), nil
