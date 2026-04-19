@@ -274,11 +274,13 @@ func (c *Client) CreateIssue(ctx context.Context, input githubv4.CreateIssueInpu
 }
 
 func (c *Client) UpdateIssue(ctx context.Context, owner, repo string, number int, req IssueSyncRequest) (IssueRef, error) {
-	labels := append([]string(nil), req.Labels...)
-	assignees := append([]string(nil), req.Assignees...)
-	milestone := 0
+	labels := append([]string{}, req.Labels...)
+	assignees := append([]string{}, req.Assignees...)
+
+	var milestone *int
 	if req.MilestoneNumber != nil {
-		milestone = *req.MilestoneNumber
+		value := *req.MilestoneNumber
+		milestone = &value
 	}
 
 	edit := &github.IssueRequest{
@@ -286,7 +288,7 @@ func (c *Client) UpdateIssue(ctx context.Context, owner, repo string, number int
 		Body:      github.String(req.Body),
 		Labels:    &labels,
 		Assignees: &assignees,
-		Milestone: &milestone,
+		Milestone: milestone,
 	}
 	issue, _, err := c.REST.Issues.Edit(ctx, owner, repo, number, edit)
 	if err != nil {
