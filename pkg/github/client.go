@@ -148,16 +148,10 @@ func (c *Client) GetProjectV2ID(ctx context.Context, owner, title string) (strin
 	return "", fmt.Errorf("project %q not found for user or organization %q", title, owner)
 }
 
-func (c *Client) GetOrCreateMilestone(ctx context.Context, owner, repo, title, description, dueOn string) (*github.Milestone, error) {
+func (c *Client) SyncMilestone(ctx context.Context, owner, repo, title, description, dueOn string) (*MilestoneSyncResult, error) {
 	milestones, _, err := c.REST.Issues.ListMilestones(ctx, owner, repo, &github.MilestoneListOptions{})
 	if err != nil {
 		return nil, err
-	}
-
-	for _, m := range milestones {
-		if m.GetTitle() == title {
-			return m, nil
-		}
 	}
 
 	var dueOnTimestamp *github.Timestamp
@@ -167,6 +161,27 @@ func (c *Client) GetOrCreateMilestone(ctx context.Context, owner, repo, title, d
 			return nil, err
 		}
 		dueOnTimestamp = &github.Timestamp{Time: t}
+	}
+
+	for _, m := range milestones {
+		if m.GetTitle() == title {
+			needsDescriptionUpdate := m.GetDescription() != description
+			needsDueOnUpdate := !timestampsEqual(m.DueOn, dueOnTimestamp)
+			if !needsDescriptionUpdate && !needsDueOnUpdate {
+				return &MilestoneSyncResult{Milestone: m}, nil
+			}
+
+			req := &github.Milestone{
+				Title:       github.String(title),
+				Description: github.String(description),
+				DueOn:       dueOnTimestamp,
+			}
+			updated, _, err := c.REST.Issues.EditMilestone(ctx, owner, repo, m.GetNumber(), req)
+			if err != nil {
+				return nil, err
+			}
+			return &MilestoneSyncResult{Milestone: updated, Updated: true}, nil
+		}
 	}
 
 	newMilestone := &github.Milestone{
@@ -180,21 +195,26 @@ func (c *Client) GetOrCreateMilestone(ctx context.Context, owner, repo, title, d
 		return nil, err
 	}
 
-	return createdMilestone, nil
+	return &MilestoneSyncResult{Milestone: createdMilestone, Created: true}, nil
 }
 
-// IssueRef holds the number and node ID of a GitHub issue.
-type IssueRef struct {
-	Number int
-	NodeID string
+func timestampsEqual(a, b *github.Timestamp) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	default:
+		return a.Time.Equal(b.Time)
+	}
 }
 
-// ListAllIssues fetches all open issues from the repo and returns a map keyed by title.
+// ListAllIssues fetches all issues from the repo and returns a map keyed by title.
 // Using the Issues list endpoint avoids the Search API's strict rate limit of 30 req/min.
 func (c *Client) ListAllIssues(ctx context.Context, owner, repo string) (map[string]IssueRef, error) {
 	result := make(map[string]IssueRef)
 	opts := &github.IssueListByRepoOptions{
-		State: "open",
+		State:       "all",
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 	for {
@@ -206,6 +226,7 @@ func (c *Client) ListAllIssues(ctx context.Context, owner, repo string) (map[str
 			result[issue.GetTitle()] = IssueRef{
 				Number: issue.GetNumber(),
 				NodeID: issue.GetNodeID(),
+				URL:    issue.GetHTMLURL(),
 			}
 		}
 		if resp.NextPage == 0 {
@@ -252,6 +273,32 @@ func (c *Client) CreateIssue(ctx context.Context, input githubv4.CreateIssueInpu
 	return &mutation, nil
 }
 
+func (c *Client) UpdateIssue(ctx context.Context, owner, repo string, number int, req IssueSyncRequest) (IssueRef, error) {
+	labels := append([]string(nil), req.Labels...)
+	assignees := append([]string(nil), req.Assignees...)
+	milestone := 0
+	if req.MilestoneNumber != nil {
+		milestone = *req.MilestoneNumber
+	}
+
+	edit := &github.IssueRequest{
+		Title:     github.String(req.Title),
+		Body:      github.String(req.Body),
+		Labels:    &labels,
+		Assignees: &assignees,
+		Milestone: &milestone,
+	}
+	issue, _, err := c.REST.Issues.Edit(ctx, owner, repo, number, edit)
+	if err != nil {
+		return IssueRef{}, err
+	}
+	return IssueRef{
+		Number: issue.GetNumber(),
+		NodeID: issue.GetNodeID(),
+		URL:    issue.GetHTMLURL(),
+	}, nil
+}
+
 type AddProjectV2ItemMutation struct {
 	AddProjectV2ItemById struct {
 		Item struct {
@@ -268,9 +315,62 @@ func (c *Client) AddIssueToProjectV2(ctx context.Context, projectID, contentID g
 	}
 	err := c.GraphQL.Mutate(ctx, &mutation, input, nil)
 	if err != nil {
-		return nil, err
+		if !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			return nil, err
+		}
+		itemID, lookupErr := c.findProjectItemIDByContent(ctx, projectID, contentID)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		mutation.AddProjectV2ItemById.Item.ID = itemID
 	}
 	return &mutation, nil
+}
+
+type projectItemsByContentQuery struct {
+	Node struct {
+		ProjectV2 struct {
+			Items struct {
+				Nodes []struct {
+					ID      githubv4.ID
+					Content struct {
+						Issue struct {
+							ID githubv4.ID
+						} `graphql:"... on Issue"`
+					}
+				}
+				PageInfo struct {
+					HasNextPage bool
+					EndCursor   githubv4.String
+				}
+			} `graphql:"items(first: 100, after: $cursor)"`
+		} `graphql:"... on ProjectV2"`
+	} `graphql:"node(id: $projectID)"`
+}
+
+func (c *Client) findProjectItemIDByContent(ctx context.Context, projectID, contentID githubv4.ID) (githubv4.ID, error) {
+	var cursor *githubv4.String
+	for {
+		var query projectItemsByContentQuery
+		variables := map[string]interface{}{
+			"projectID": projectID,
+			"cursor":    cursor,
+		}
+		if err := c.GraphQL.Query(ctx, &query, variables); err != nil {
+			return nil, fmt.Errorf("failed to locate existing project item: %w", err)
+		}
+		for _, node := range query.Node.ProjectV2.Items.Nodes {
+			if node.Content.Issue.ID == contentID {
+				return node.ID, nil
+			}
+		}
+		if !query.Node.ProjectV2.Items.PageInfo.HasNextPage {
+			break
+		}
+		next := query.Node.ProjectV2.Items.PageInfo.EndCursor
+		cursor = &next
+	}
+	return nil, fmt.Errorf("project item for content %s not found after duplicate add", contentID)
 }
 
 type MilestoneIDQuery struct {
@@ -294,7 +394,6 @@ func (c *Client) GetMilestoneID(ctx context.Context, owner, name string, number 
 	}
 	return query.Repository.Milestone.ID, nil
 }
-
 
 func (c *Client) GetOrCreateLabel(ctx context.Context, owner, repo, labelName string) (githubv4.ID, error) {
 	label, resp, err := c.REST.Issues.GetLabel(ctx, owner, repo, labelName)
@@ -537,7 +636,7 @@ type CreateProjectV2Mutation struct {
 }
 
 type CreateProjectV2Input struct {
-	OwnerID githubv4.ID    `json:"ownerId"`
+	OwnerID githubv4.ID     `json:"ownerId"`
 	Title   githubv4.String `json:"title"`
 }
 

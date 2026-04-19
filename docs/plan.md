@@ -72,17 +72,26 @@ This is the heart of the tool. The `apply` command processes the YAML file.
     * Fetch `Project V2 ID` by matching the title.
     * *Cache these IDs to avoid repeated lookups.*
 2.  **Milestone Sync:**
-    * Check if defined milestones exist.
-    * If yes -> Get ID. If no -> Create -> Get ID.
+    * Check if defined milestones exist by exact title.
+    * If yes -> update description / due date as needed, then get ID.
+    * If no -> create -> get ID.
 3.  **Execution Loop (Per Epic):**
-    * **Step A (Children):** Iterate through `children`. Create each Issue via GraphQL. Store the returned `Issue Number` and `Node ID`.
+    * **Step A (Children):** Iterate through `children`. For each exact-title match, update the existing issue body/labels and resync its project linkage. Otherwise create it and store the returned `Issue Number` and `Node ID`.
     * **Step B (Epic Body):** Construct the Epic's markdown body. Append the Tasklist:
         - [ ] #14 Create migration script
         - [ ] #15 Update ORM models
-    * **Step C (Create Epic):** Create the Parent Issue with the `[Epic]` label and the constructed body.
+    * **Step C (Epic Sync):** For an exact-title match, update the existing parent issue body, milestone, labels, assignees, and project status. Otherwise create the Parent Issue with the `[Epic]` label and the constructed body.
     * **Step D (Project Linkage):**
-        * Add the Epic and all Children to the Project V2 Board.
+        * Add the Epic and all Children to the Project V2 Board, reusing the existing project item when one already exists.
         * Update the `Status` field for all items to "Todo" (or as defined).
+
+### Sync Matching Notes
+
+The helper currently uses exact title matching when deciding whether a plan item already exists.
+
+- Changing the body, milestone, labels, assignees, or status of an existing plan item is safe: rerunning `apply` will synchronize the existing resource.
+- Renaming an issue or epic in the plan is treated as a new item because the title no longer matches the existing GitHub issue.
+- Existing sub-issue links are additive. The helper ensures planned child issues are linked to the epic, but it does not currently remove links that are no longer present in the plan.
 
 ### Phase 3: The "MCP" Mode (`serve` command)
 

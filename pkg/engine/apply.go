@@ -7,7 +7,6 @@ import (
 
 	ghclient "github.com/goblinsan/gh-project-helper/pkg/github"
 	"github.com/goblinsan/gh-project-helper/pkg/types"
-	gogithub "github.com/google/go-github/v66/github"
 	"github.com/shurcooL/githubv4"
 )
 
@@ -16,12 +15,13 @@ type GitHubClient interface {
 	GetRepositoryID(ctx context.Context, owner, name string) (string, error)
 	GetProjectV2ID(ctx context.Context, owner, title string) (string, error)
 	GetProjectV2StatusFieldOptions(ctx context.Context, projectID githubv4.ID) (githubv4.ID, map[string]string, error)
-	GetOrCreateMilestone(ctx context.Context, owner, repo, title, description, dueOn string) (*gogithub.Milestone, error)
+	SyncMilestone(ctx context.Context, owner, repo, title, description, dueOn string) (*ghclient.MilestoneSyncResult, error)
 	GetMilestoneID(ctx context.Context, owner, name string, number int) (string, error)
 	ListAllIssues(ctx context.Context, owner, repo string) (map[string]ghclient.IssueRef, error)
 	GetOrCreateLabel(ctx context.Context, owner, repo, labelName string) (githubv4.ID, error)
 	GetUserID(ctx context.Context, login string) (githubv4.ID, error)
 	CreateIssue(ctx context.Context, input githubv4.CreateIssueInput) (*ghclient.CreateIssueMutation, error)
+	UpdateIssue(ctx context.Context, owner, repo string, number int, req ghclient.IssueSyncRequest) (ghclient.IssueRef, error)
 	AddIssueToProjectV2(ctx context.Context, projectID, contentID githubv4.ID) (*ghclient.AddProjectV2ItemMutation, error)
 	AddSubIssue(ctx context.Context, parentIssueID, childIssueID githubv4.ID) error
 	UpdateProjectV2ItemStatus(ctx context.Context, projectID, itemID, fieldID githubv4.ID, optionID string) error
@@ -58,16 +58,31 @@ type Options struct {
 // Report summarizes the results of an ApplyPlan execution.
 type Report struct {
 	MilestonesCreated int      `json:"milestones_created"`
+	MilestonesUpdated int      `json:"milestones_updated"`
 	EpicsCreated      int      `json:"epics_created"`
+	EpicsUpdated      int      `json:"epics_updated"`
 	EpicsSkipped      int      `json:"epics_skipped"`
 	IssuesCreated     int      `json:"issues_created"`
+	IssuesUpdated     int      `json:"issues_updated"`
 	IssuesSkipped     int      `json:"issues_skipped"`
 	EpicURLs          []string `json:"epic_urls,omitempty"`
 }
 
 func (r *Report) String() string {
-	return fmt.Sprintf("Summary: %d milestones synced, %d epics created (%d skipped), %d issues created (%d skipped)",
-		r.MilestonesCreated, r.EpicsCreated, r.EpicsSkipped, r.IssuesCreated, r.IssuesSkipped)
+	return fmt.Sprintf(
+		"Summary: %d milestones synced (%d created, %d updated), %d epics synced (%d created, %d updated, %d skipped), %d issues synced (%d created, %d updated, %d skipped)",
+		r.MilestonesCreated+r.MilestonesUpdated,
+		r.MilestonesCreated,
+		r.MilestonesUpdated,
+		r.EpicsCreated+r.EpicsUpdated,
+		r.EpicsCreated,
+		r.EpicsUpdated,
+		r.EpicsSkipped,
+		r.IssuesCreated+r.IssuesUpdated,
+		r.IssuesCreated,
+		r.IssuesUpdated,
+		r.IssuesSkipped,
+	)
 }
 
 // ApplyPlan executes a plan against the GitHub API, creating milestones, epics, and child issues.
@@ -126,22 +141,29 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 	}
 
 	// Milestone Sync
-	milestones := make(map[string]string)
+	milestoneNodeIDs := make(map[string]string)
+	milestoneNumbers := make(map[string]int)
 	for _, m := range plan.Milestones {
 		if opts.DryRun {
 			fmt.Printf("[dry-run] Would create/sync milestone: %s (due: %s)\n", m.Title, m.DueOn)
 			continue
 		}
-		milestone, err := client.GetOrCreateMilestone(ctx, owner, repo, m.Title, m.Description, m.DueOn)
+		milestoneResult, err := client.SyncMilestone(ctx, owner, repo, m.Title, m.Description, m.DueOn)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get or create milestone: %w", err)
+			return nil, fmt.Errorf("failed to sync milestone: %w", err)
 		}
-		milestoneID, err := client.GetMilestoneID(ctx, owner, repo, milestone.GetNumber())
+		milestoneID, err := client.GetMilestoneID(ctx, owner, repo, milestoneResult.Milestone.GetNumber())
 		if err != nil {
 			return nil, fmt.Errorf("failed to get milestone id: %w", err)
 		}
-		milestones[m.Title] = milestoneID
-		report.MilestonesCreated++
+		milestoneNodeIDs[m.Title] = milestoneID
+		milestoneNumbers[m.Title] = milestoneResult.Milestone.GetNumber()
+		if milestoneResult.Created {
+			report.MilestonesCreated++
+		}
+		if milestoneResult.Updated {
+			report.MilestonesUpdated++
+		}
 	}
 
 	// Execution Loop (Per Epic)
@@ -176,25 +198,27 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 		for _, child := range epic.Children {
 			// Idempotency: check if child issue already exists (from pre-fetched cache)
 			var existingNum int
-			var existingNodeID string
 			if ref, ok := issueCache[child.Title]; ok {
-				existingNum, existingNodeID = ref.Number, ref.NodeID
+				existingNum = ref.Number
 			}
 			if existingNum > 0 {
-				fmt.Printf("  Skipping child issue (already exists): #%d %s\n", existingNum, child.Title)
-				childIssues = append(childIssues, fmt.Sprintf("- [ ] #%d", existingNum))
-				childNodeIDs = append(childNodeIDs, githubv4.ID(existingNodeID))
-				report.IssuesSkipped++
+				fmt.Printf("  Updating child issue: #%d %s\n", existingNum, child.Title)
+				updatedIssue, err := client.UpdateIssue(ctx, owner, repo, existingNum, ghclient.IssueSyncRequest{
+					Title:  child.Title,
+					Body:   child.Body,
+					Labels: append([]string(nil), child.Labels...),
+				})
+				if err != nil {
+					return nil, fmt.Errorf("failed to update child issue: %w", err)
+				}
+				issueCache[child.Title] = updatedIssue
+				childIssues = append(childIssues, fmt.Sprintf("- [ ] #%d", updatedIssue.Number))
+				childNodeIDs = append(childNodeIDs, githubv4.ID(updatedIssue.NodeID))
+				report.IssuesUpdated++
 
 				// Still ensure it's on the project board
-				projectItem, err := client.AddIssueToProjectV2(ctx, githubv4.ID(projectID), githubv4.ID(existingNodeID))
-				if err != nil {
-					return nil, fmt.Errorf("failed to add existing child issue to project: %w", err)
-				}
-				if epic.Status != "" {
-					if statusID, ok := statusOptions[epic.Status]; ok {
-						_ = client.UpdateProjectV2ItemStatus(ctx, githubv4.ID(projectID), projectItem.AddProjectV2ItemById.Item.ID, statusFieldID, statusID)
-					}
+				if err := syncProjectStatus(ctx, client, githubv4.ID(projectID), githubv4.ID(updatedIssue.NodeID), statusFieldID, statusOptions, epic.Status); err != nil {
+					return nil, fmt.Errorf("failed to sync project status for existing child issue: %w", err)
 				}
 				continue
 			}
@@ -219,58 +243,40 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 			if err != nil {
 				return nil, fmt.Errorf("failed to create child issue: %w", err)
 			}
+			issueCache[child.Title] = ghclient.IssueRef{
+				Number: issue.CreateIssue.Issue.Number,
+				NodeID: issue.CreateIssue.Issue.ID.(string),
+				URL:    issue.CreateIssue.Issue.URL.String(),
+			}
 			childIssues = append(childIssues, fmt.Sprintf("- [ ] #%d", issue.CreateIssue.Issue.Number))
 			childNodeIDs = append(childNodeIDs, issue.CreateIssue.Issue.ID)
 			report.IssuesCreated++
 
-			// Add child issue to project
-			projectItem, err := client.AddIssueToProjectV2(ctx, githubv4.ID(projectID), issue.CreateIssue.Issue.ID)
-			if err != nil {
-				return nil, fmt.Errorf("failed to add child issue to project: %w", err)
-			}
-
-			// Update status
-			if epic.Status != "" {
-				if statusID, ok := statusOptions[epic.Status]; ok {
-					err := client.UpdateProjectV2ItemStatus(ctx, githubv4.ID(projectID), projectItem.AddProjectV2ItemById.Item.ID, statusFieldID, statusID)
-					if err != nil {
-						return nil, fmt.Errorf("failed to update status for child issue: %w", err)
-					}
-				}
+			if err := syncProjectStatus(ctx, client, githubv4.ID(projectID), issue.CreateIssue.Issue.ID, statusFieldID, statusOptions, epic.Status); err != nil {
+				return nil, fmt.Errorf("failed to sync project status for child issue: %w", err)
 			}
 		}
 
 		// Idempotency: check if epic issue already exists (from pre-fetched cache)
 		var existingEpicNum int
-		var existingEpicNodeID string
 		if ref, ok := issueCache[epic.Title]; ok {
-			existingEpicNum, existingEpicNodeID = ref.Number, ref.NodeID
-		}
-		if existingEpicNum > 0 {
-			fmt.Printf("Skipping epic (already exists): #%d %s\n", existingEpicNum, epic.Title)
-			report.EpicsSkipped++
-			// Still ensure it's on the project board
-			projectItem, err := client.AddIssueToProjectV2(ctx, githubv4.ID(projectID), githubv4.ID(existingEpicNodeID))
-			if err != nil {
-				return nil, fmt.Errorf("failed to add existing epic to project: %w", err)
-			}
-			if epic.Status != "" {
-				if statusID, ok := statusOptions[epic.Status]; ok {
-					_ = client.UpdateProjectV2ItemStatus(ctx, githubv4.ID(projectID), projectItem.AddProjectV2ItemById.Item.ID, statusFieldID, statusID)
-				}
-			}
-			continue
+			existingEpicNum = ref.Number
 		}
 
 		// Step B (Epic Body)
 		epicBody := epic.Body + "\n\n## Sub-issues\n\n" + strings.Join(childIssues, "\n")
 
-		// Step C (Create Epic)
 		var milestoneID *githubv4.ID
 		if epic.Milestone != "" {
-			if mID, ok := milestones[epic.Milestone]; ok {
+			if mID, ok := milestoneNodeIDs[epic.Milestone]; ok {
 				id := githubv4.ID(mID)
 				milestoneID = &id
+			}
+		}
+		var milestoneNumber *int
+		if epic.Milestone != "" {
+			if number, ok := milestoneNumbers[epic.Milestone]; ok {
+				milestoneNumber = &number
 			}
 		}
 
@@ -280,12 +286,14 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 			return nil, fmt.Errorf("failed to get or create Epic label: %w", err)
 		}
 		labelIDs := []githubv4.ID{epicLabelID}
+		epicLabelNames := []string{"Epic"}
 		for _, labelName := range epic.Labels {
 			labelID, err := client.GetOrCreateLabel(ctx, owner, repo, labelName)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get or create label %s: %w", labelName, err)
 			}
 			labelIDs = append(labelIDs, labelID)
+			epicLabelNames = append(epicLabelNames, labelName)
 		}
 
 		// Resolve assignee IDs
@@ -296,6 +304,34 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 				return nil, fmt.Errorf("failed to get user id for %s: %w", assigneeLogin, err)
 			}
 			assigneeIDs = append(assigneeIDs, assigneeID)
+		}
+		if existingEpicNum > 0 {
+			fmt.Printf("Updating epic: #%d %s\n", existingEpicNum, epic.Title)
+			updatedEpic, err := client.UpdateIssue(ctx, owner, repo, existingEpicNum, ghclient.IssueSyncRequest{
+				Title:           epic.Title,
+				Body:            epicBody,
+				MilestoneNumber: milestoneNumber,
+				Labels:          epicLabelNames,
+				Assignees:       append([]string(nil), epic.Assignees...),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to update epic issue: %w", err)
+			}
+			issueCache[epic.Title] = updatedEpic
+			if err := syncProjectStatus(ctx, client, githubv4.ID(projectID), githubv4.ID(updatedEpic.NodeID), statusFieldID, statusOptions, epic.Status); err != nil {
+				return nil, fmt.Errorf("failed to sync project status for existing epic: %w", err)
+			}
+			for _, childNodeID := range childNodeIDs {
+				err := client.AddSubIssue(ctx, githubv4.ID(updatedEpic.NodeID), childNodeID)
+				if err != nil {
+					fmt.Printf("  Warning: failed to add sub-issue relationship: %v\n", err)
+				}
+			}
+			report.EpicsUpdated++
+			if updatedEpic.URL != "" {
+				report.EpicURLs = append(report.EpicURLs, updatedEpic.URL)
+			}
+			continue
 		}
 
 		epicBodyStr := githubv4.String(epicBody)
@@ -310,21 +346,15 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 		if err != nil {
 			return nil, fmt.Errorf("failed to create epic issue: %w", err)
 		}
-
-		// Step D (Project Linkage)
-		projectItem, err := client.AddIssueToProjectV2(ctx, githubv4.ID(projectID), epicIssue.CreateIssue.Issue.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to add epic issue to project: %w", err)
+		issueCache[epic.Title] = ghclient.IssueRef{
+			Number: epicIssue.CreateIssue.Issue.Number,
+			NodeID: epicIssue.CreateIssue.Issue.ID.(string),
+			URL:    epicIssue.CreateIssue.Issue.URL.String(),
 		}
 
-		// Update status
-		if epic.Status != "" {
-			if statusID, ok := statusOptions[epic.Status]; ok {
-				err := client.UpdateProjectV2ItemStatus(ctx, githubv4.ID(projectID), projectItem.AddProjectV2ItemById.Item.ID, statusFieldID, statusID)
-				if err != nil {
-					return nil, fmt.Errorf("failed to update status for epic issue: %w", err)
-				}
-			}
+		// Step D (Project Linkage)
+		if err := syncProjectStatus(ctx, client, githubv4.ID(projectID), epicIssue.CreateIssue.Issue.ID, statusFieldID, statusOptions, epic.Status); err != nil {
+			return nil, fmt.Errorf("failed to sync project status for epic issue: %w", err)
 		}
 
 		// Step E (Sub-issue Relationships)
@@ -352,6 +382,21 @@ func ApplyPlan(ctx context.Context, client GitHubClient, plan types.Plan, opts O
 	}
 
 	return report, nil
+}
+
+func syncProjectStatus(ctx context.Context, client GitHubClient, projectID, contentID, statusFieldID githubv4.ID, statusOptions map[string]string, status string) error {
+	projectItem, err := client.AddIssueToProjectV2(ctx, projectID, contentID)
+	if err != nil {
+		return err
+	}
+	if status == "" {
+		return nil
+	}
+	statusID, ok := statusOptions[status]
+	if !ok {
+		return nil
+	}
+	return client.UpdateProjectV2ItemStatus(ctx, projectID, projectItem.AddProjectV2ItemById.Item.ID, statusFieldID, statusID)
 }
 
 // ensureRepo verifies the repository exists. If not, it searches for similar names,

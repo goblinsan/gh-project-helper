@@ -14,12 +14,16 @@ import (
 
 // mockClient implements GitHubClient for testing.
 type mockClient struct {
-	issueCounter  int
-	createdIssues []string
-	projectItems  []string
-	statusUpdates []string
-	labelRequests []string
-	subIssueLinks [][2]string // [parentID, childID]
+	issueCounter      int
+	createdIssues     []string
+	updatedIssues     []string
+	projectItems      []string
+	statusUpdates     []string
+	labelRequests     []string
+	subIssueLinks     [][2]string // [parentID, childID]
+	milestoneCreates  []string
+	milestoneUpdates  []string
+	existingMilestone map[string]ghclient.MilestoneSyncResult
 
 	// Pre-flight tracking
 	repoExists       bool
@@ -34,9 +38,10 @@ type mockClient struct {
 
 func newMockClient() *mockClient {
 	return &mockClient{
-		repoExists:    true,
-		readmeExists:  true,
-		projectExists: true,
+		repoExists:        true,
+		readmeExists:      true,
+		projectExists:     true,
+		existingMilestone: make(map[string]ghclient.MilestoneSyncResult),
 	}
 }
 
@@ -59,11 +64,27 @@ func (m *mockClient) GetProjectV2StatusFieldOptions(_ context.Context, _ githubv
 	}, nil
 }
 
-func (m *mockClient) GetOrCreateMilestone(_ context.Context, _, _, title, _, _ string) (*gogithub.Milestone, error) {
+func (m *mockClient) SyncMilestone(_ context.Context, _, _, title, _, _ string) (*ghclient.MilestoneSyncResult, error) {
+	if existing, ok := m.existingMilestone[title]; ok {
+		milestone := *existing.Milestone
+		result := ghclient.MilestoneSyncResult{
+			Milestone: &milestone,
+			Updated:   existing.Updated,
+			Created:   existing.Created,
+		}
+		if result.Updated {
+			m.milestoneUpdates = append(m.milestoneUpdates, title)
+		}
+		return &result, nil
+	}
 	num := 1
-	return &gogithub.Milestone{
-		Number: &num,
-		Title:  &title,
+	m.milestoneCreates = append(m.milestoneCreates, title)
+	return &ghclient.MilestoneSyncResult{
+		Milestone: &gogithub.Milestone{
+			Number: &num,
+			Title:  &title,
+		},
+		Created: true,
 	}, nil
 }
 
@@ -98,6 +119,15 @@ func (m *mockClient) CreateIssue(_ context.Context, input githubv4.CreateIssueIn
 	result.CreateIssue.Issue.Number = m.issueCounter
 	result.CreateIssue.Issue.URL = githubv4.URI{URL: &url.URL{Scheme: "https", Host: "github.com", Path: "/test/repo/issues/" + title}}
 	return result, nil
+}
+
+func (m *mockClient) UpdateIssue(_ context.Context, _, _ string, number int, req ghclient.IssueSyncRequest) (ghclient.IssueRef, error) {
+	m.updatedIssues = append(m.updatedIssues, req.Title)
+	return ghclient.IssueRef{
+		Number: number,
+		NodeID: "existing-node-" + req.Title,
+		URL:    "https://github.com/test/repo/issues/" + req.Title,
+	}, nil
 }
 
 func (m *mockClient) AddIssueToProjectV2(_ context.Context, _, contentID githubv4.ID) (*ghclient.AddProjectV2ItemMutation, error) {
@@ -319,17 +349,26 @@ func TestApplyPlan_Idempotency(t *testing.T) {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
 
-	if report.IssuesSkipped != 1 {
-		t.Errorf("expected 1 skipped issue, got %d", report.IssuesSkipped)
+	if report.IssuesSkipped != 0 {
+		t.Errorf("expected 0 skipped issues, got %d", report.IssuesSkipped)
 	}
-	if report.EpicsSkipped != 1 {
-		t.Errorf("expected 1 skipped epic, got %d", report.EpicsSkipped)
+	if report.EpicsSkipped != 0 {
+		t.Errorf("expected 0 skipped epics, got %d", report.EpicsSkipped)
 	}
 	if report.IssuesCreated != 0 {
 		t.Errorf("expected 0 created issues, got %d", report.IssuesCreated)
 	}
 	if report.EpicsCreated != 0 {
 		t.Errorf("expected 0 created epics, got %d", report.EpicsCreated)
+	}
+	if report.IssuesUpdated != 1 {
+		t.Errorf("expected 1 updated issue, got %d", report.IssuesUpdated)
+	}
+	if report.EpicsUpdated != 1 {
+		t.Errorf("expected 1 updated epic, got %d", report.EpicsUpdated)
+	}
+	if len(existingMock.updatedIssues) != 2 {
+		t.Errorf("expected 2 updated issues, got %d: %v", len(existingMock.updatedIssues), existingMock.updatedIssues)
 	}
 }
 
@@ -349,7 +388,7 @@ func (m *idempotentMockClient) FindIssueByTitle(_ context.Context, _, _, title s
 func (m *idempotentMockClient) ListAllIssues(_ context.Context, _, _ string) (map[string]ghclient.IssueRef, error) {
 	result := make(map[string]ghclient.IssueRef)
 	for title, num := range m.existingIssues {
-		result[title] = ghclient.IssueRef{Number: num, NodeID: "existing-node-" + title}
+		result[title] = ghclient.IssueRef{Number: num, NodeID: "existing-node-" + title, URL: "https://github.com/test/repo/issues/" + title}
 	}
 	return result, nil
 }
@@ -357,12 +396,15 @@ func (m *idempotentMockClient) ListAllIssues(_ context.Context, _, _ string) (ma
 func TestReport_String(t *testing.T) {
 	r := &Report{
 		MilestonesCreated: 2,
+		MilestonesUpdated: 1,
 		EpicsCreated:      3,
+		EpicsUpdated:      4,
 		EpicsSkipped:      1,
 		IssuesCreated:     10,
+		IssuesUpdated:     5,
 		IssuesSkipped:     2,
 	}
-	expected := "Summary: 2 milestones synced, 3 epics created (1 skipped), 10 issues created (2 skipped)"
+	expected := "Summary: 3 milestones synced (2 created, 1 updated), 7 epics synced (3 created, 4 updated, 1 skipped), 15 issues synced (10 created, 5 updated, 2 skipped)"
 	if r.String() != expected {
 		t.Errorf("expected %q, got %q", expected, r.String())
 	}
@@ -587,5 +629,38 @@ func TestApplyPlan_CreateRepoIfMissingRejectsWhenSimilarExistsWithoutResolution(
 	_, err := ApplyPlan(context.Background(), mock, plan, Options{CreateRepoIfMissing: true})
 	if err == nil {
 		t.Fatal("expected error when similar repos exist without explicit resolution")
+	}
+}
+
+func TestApplyPlan_UpdatesExistingMilestone(t *testing.T) {
+	mock := newMockClient()
+	title := "Phase 1"
+	number := 7
+	mock.existingMilestone[title] = ghclient.MilestoneSyncResult{
+		Milestone: &gogithub.Milestone{
+			Number: &number,
+			Title:  &title,
+		},
+		Updated: true,
+	}
+
+	plan := types.Plan{
+		Project:    "Test Project",
+		Repository: "owner/repo",
+		Milestones: []types.Milestone{{Title: title, Description: "Updated", DueOn: "2026-05-01"}},
+	}
+
+	report, err := ApplyPlan(context.Background(), mock, plan, Options{})
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if report.MilestonesCreated != 0 {
+		t.Errorf("expected 0 created milestones, got %d", report.MilestonesCreated)
+	}
+	if report.MilestonesUpdated != 1 {
+		t.Errorf("expected 1 updated milestone, got %d", report.MilestonesUpdated)
+	}
+	if len(mock.milestoneUpdates) != 1 || mock.milestoneUpdates[0] != title {
+		t.Errorf("expected milestone %q to be updated, got %v", title, mock.milestoneUpdates)
 	}
 }

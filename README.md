@@ -9,6 +9,7 @@ A Model Context Protocol (MCP) compliant CLI tool to convert plans into GitHub p
 - GitHub GraphQL API support via `shurcooL/githubv4` (essential for Projects V2)
 - Robust CLI framework using `spf13/cobra`
 - Configuration management with `spf13/viper`
+- Sync-oriented `apply` flow for milestones, epics, and child issues
 
 ## Requirements
 
@@ -49,6 +50,19 @@ token: ghp_yourGitHubPersonalAccessToken
 # Authenticate and display user info
 ./gh-project-helper whoami
 ```
+
+## Plan Apply Semantics
+
+`gh-project-helper apply` is a sync operation, not a create-once operation.
+
+- Milestones are matched by exact title and created or updated in place.
+- Epics are matched by exact title and created or updated in place.
+- Child issues are matched by exact title and created or updated in place.
+- Existing issues that match the plan are kept on the target Project V2 board and have their project status synchronized.
+- Epic bodies are regenerated from the current plan so the sub-issue checklist stays current.
+- `gh-project-helper apply --json` emits the sync report as structured JSON for API callers.
+
+Current matching is exact-title based. If you rename an issue in the plan, the helper will treat that as a new issue unless you also keep the original title aligned.
 
 ## Project Structure
 

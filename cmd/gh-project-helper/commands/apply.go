@@ -3,6 +3,7 @@ package commands
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -62,6 +63,7 @@ func init() {
 	applyCmd.Flags().Bool("dry-run", false, "Preview what would be created without making changes")
 	applyCmd.Flags().Bool("create-repo-if-missing", false, "Create the requested repository automatically when it does not exist and no similar matches are found")
 	applyCmd.Flags().String("repository-override", "", "Override the plan repository with an explicit owner/repo target")
+	applyCmd.Flags().Bool("json", false, "Emit the apply report as JSON instead of a human summary")
 }
 
 var applyCmd = &cobra.Command{
@@ -94,6 +96,7 @@ var applyCmd = &cobra.Command{
 
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		createRepoIfMissing, _ := cmd.Flags().GetBool("create-repo-if-missing")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
 		report, err := engine.ApplyPlan(context.Background(), client, plan, engine.Options{
 			DryRun:              dryRun,
 			Prompter:            newCLIPrompter(),
@@ -103,6 +106,9 @@ var applyCmd = &cobra.Command{
 			return err
 		}
 		if report != nil {
+			if jsonOutput {
+				return json.NewEncoder(os.Stdout).Encode(report)
+			}
 			fmt.Println(report)
 		}
 		return nil
